@@ -1,0 +1,7 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/StockTool.Core/StockTool.Core.csproj" />
+    <Project Path="src/StockTool.Data/StockTool.Data.csproj" />
+    <Project Path="src/StockTool/StockTool.csproj" />
+  </Folder>
+</Solution>

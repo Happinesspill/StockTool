@@ -1,0 +1,8 @@
+﻿<Project>
+  <PropertyGroup>
+    <!-- 统一输出到解决方案根目录 StockTool\bin\Debug|Release -->
+    <OutputPath>$(MSBuildThisFileDirectory)bin\$(Configuration)\</OutputPath>
+    <AppendTargetFrameworkToOutputPath>false</AppendTargetFrameworkToOutputPath>
+    <AppendRuntimeIdentifierToOutputPath>false</AppendRuntimeIdentifierToOutputPath>
+  </PropertyGroup>
+</Project>
