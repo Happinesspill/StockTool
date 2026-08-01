@@ -24,6 +24,14 @@ public class EastMoneyClient
 
     public static string ToSecId(string internalCode)
     {
+        // 全球指数：IX100.HSI → 100.HSI
+        if (internalCode.StartsWith("IX", StringComparison.OrdinalIgnoreCase)
+            && internalCode.Length > 2
+            && internalCode.Contains('.'))
+        {
+            return internalCode[2..];
+        }
+
         string prefix = internalCode[..2].ToUpperInvariant();
         string code = internalCode[2..];
         int market = prefix switch
@@ -42,16 +50,34 @@ public class EastMoneyClient
     public static string InternalCodeFromSecId(string secid)
     {
         var parts = secid.Split('.');
-        int market = int.Parse(parts[0]);
-        string prefix = market switch
+        if (parts.Length < 2)
+            throw new ArgumentException($"Invalid secid: {secid}");
+
+        if (!int.TryParse(parts[0], out int market))
         {
-            1 => "SH",
-            0 => "SZ",
-            116 => "HK",
-            _ => "SH"
-        };
-        return $"{prefix}{parts[1]}";
+            // 非数字市场号时原样拼回 IX 前缀
+            return $"IX{secid}";
+        }
+
+        if (market is 1 or 0 or 116)
+        {
+            string prefix = market switch
+            {
+                1 => "SH",
+                0 => "SZ",
+                116 => "HK",
+                _ => "SH"
+            };
+            return $"{prefix}{parts[1]}";
+        }
+
+        // 全球指数等：100.HSI → IX100.HSI
+        return $"IX{parts[0]}.{parts[1]}";
     }
+
+    /// <summary>东财 push2 批量报价（公开给指数等场景）。</summary>
+    public Task<List<QuoteItem>> GetPush2QuotesAsync(IReadOnlyList<string> internalCodes)
+        => GetEastMoneyQuotesAsync(internalCodes);
 
     public static string MarketLabelFromPrefix(string prefix) => prefix switch
     {
@@ -67,23 +93,25 @@ public class EastMoneyClient
     {
         if (internalCodes.Count == 0) return [];
 
-        // 港股：东方财富 push2（低延时）；A 股/ETF：腾讯/新浪竞速，东财兜底
-        var hkCodes = internalCodes
-            .Where(c => c.StartsWith("HK", StringComparison.OrdinalIgnoreCase))
+        // 港股/全球指数：东财 push2；A 股/ETF：腾讯/新浪竞速，东财兜底
+        var push2Codes = internalCodes
+            .Where(c => c.StartsWith("HK", StringComparison.OrdinalIgnoreCase)
+                     || c.StartsWith("IX", StringComparison.OrdinalIgnoreCase))
             .ToList();
         var otherCodes = internalCodes
-            .Where(c => !c.StartsWith("HK", StringComparison.OrdinalIgnoreCase))
+            .Where(c => !c.StartsWith("HK", StringComparison.OrdinalIgnoreCase)
+                     && !c.StartsWith("IX", StringComparison.OrdinalIgnoreCase))
             .ToList();
 
-        if (hkCodes.Count > 0 && otherCodes.Count == 0)
-            return await GetEastMoneyQuotesAsync(hkCodes);
+        if (push2Codes.Count > 0 && otherCodes.Count == 0)
+            return await GetEastMoneyQuotesAsync(push2Codes);
 
-        if (hkCodes.Count == 0)
+        if (push2Codes.Count == 0)
             return await GetNonHkQuotesAsync(otherCodes);
 
-        var hkTask = GetEastMoneyQuotesAsync(hkCodes);
+        var push2Task = GetEastMoneyQuotesAsync(push2Codes);
         var otherTask = GetNonHkQuotesAsync(otherCodes);
-        var parts = await Task.WhenAll(hkTask, otherTask);
+        var parts = await Task.WhenAll(push2Task, otherTask);
         return parts.SelectMany(x => x).ToList();
     }
 
@@ -108,10 +136,31 @@ public class EastMoneyClient
     }
 
     /// <summary>
-    /// 东方财富 push2 批量报价（港股主源；A 股兜底）。
-    /// 接口与 xStock 一致：ulist/get + ut。
+    /// 东方财富 push2 批量报价。A 股指数与全球指数分批请求，避免互相拖垮。
     /// </summary>
     private async Task<List<QuoteItem>> GetEastMoneyQuotesAsync(IReadOnlyList<string> internalCodes)
+    {
+        if (internalCodes.Count == 0) return [];
+
+        var ixCodes = internalCodes
+            .Where(c => c.StartsWith("IX", StringComparison.OrdinalIgnoreCase))
+            .ToList();
+        var otherCodes = internalCodes
+            .Where(c => !c.StartsWith("IX", StringComparison.OrdinalIgnoreCase))
+            .ToList();
+
+        if (ixCodes.Count == 0)
+            return await FetchPush2BatchAsync(otherCodes);
+        if (otherCodes.Count == 0)
+            return await FetchPush2BatchAsync(ixCodes);
+
+        var parts = await Task.WhenAll(
+            FetchPush2BatchAsync(otherCodes),
+            FetchPush2BatchAsync(ixCodes));
+        return parts.SelectMany(x => x).ToList();
+    }
+
+    private async Task<List<QuoteItem>> FetchPush2BatchAsync(IReadOnlyList<string> internalCodes)
     {
         if (internalCodes.Count == 0) return [];
 
@@ -130,7 +179,8 @@ public class EastMoneyClient
             using var req = new HttpRequestMessage(HttpMethod.Get, url);
             req.Headers.TryAddWithoutValidation("Referer", "https://quote.eastmoney.com/");
             using var resp = await _http.SendAsync(req);
-            resp.EnsureSuccessStatusCode();
+            if (!resp.IsSuccessStatusCode) return [];
+
             var response = await resp.Content.ReadFromJsonAsync<QuoteBatchResponse>(JsonOpts);
             var list = response?.Data?.Diff ?? [];
 

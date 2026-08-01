@@ -1,0 +1,236 @@
+﻿<Window x:Class="StockTool.Views.ManageGroupsWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        WindowStyle="None"
+        AllowsTransparency="True"
+        Background="Transparent"
+        ResizeMode="NoResize"
+        Width="400" Height="600"
+        WindowStartupLocation="CenterOwner"
+        Title="管理分组"
+        MouseLeftButtonDown="Window_MouseLeftButtonDown">
+
+    <Border Background="#F5FFFFFF"
+            BorderBrush="#D0CCCCCC"
+            BorderThickness="1"
+            CornerRadius="12"
+            Padding="16">
+        <Grid>
+            <Grid.RowDefinitions>
+                <RowDefinition Height="Auto" />
+                <RowDefinition Height="Auto" />
+                <RowDefinition Height="*" />
+                <RowDefinition Height="Auto" />
+            </Grid.RowDefinitions>
+
+            <!-- Title -->
+            <Grid Grid.Row="0" Margin="0,0,0,10">
+                <TextBlock Text="管理分组"
+                           Foreground="#1A1A1A"
+                           FontSize="16"
+                           FontWeight="SemiBold"
+                           VerticalAlignment="Center" />
+                <Button Content="✕"
+                        HorizontalAlignment="Right"
+                        Width="28" Height="28"
+                        Background="Transparent"
+                        BorderThickness="0"
+                        Foreground="#666666"
+                        Cursor="Hand"
+                        Click="BtnClose_Click" />
+            </Grid>
+
+            <!-- Home index settings -->
+            <Border Grid.Row="1"
+                    Background="#FFF8F8F8"
+                    BorderBrush="#E8E8E8"
+                    BorderThickness="1"
+                    CornerRadius="10"
+                    Padding="12"
+                    Margin="0,0,0,12">
+                <StackPanel>
+                    <TextBlock Text="首页指数设置"
+                               Foreground="#666666"
+                               FontSize="13"
+                               FontWeight="SemiBold"
+                               Margin="0,0,0,10" />
+
+                    <!-- Selected cards -->
+                    <ItemsControl ItemsSource="{Binding SelectedHomeIndices}">
+                        <ItemsControl.ItemsPanel>
+                            <ItemsPanelTemplate>
+                                <UniformGrid Rows="1" Columns="4" />
+                            </ItemsPanelTemplate>
+                        </ItemsControl.ItemsPanel>
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate>
+                                <Border Background="#F0F0F0"
+                                        CornerRadius="8"
+                                        Padding="8,10"
+                                        Margin="2,0"
+                                        MinHeight="64">
+                                    <Grid>
+                                        <Button Content="✕"
+                                                HorizontalAlignment="Right"
+                                                VerticalAlignment="Top"
+                                                Width="18" Height="18"
+                                                FontSize="10"
+                                                Padding="0"
+                                                Background="Transparent"
+                                                BorderThickness="0"
+                                                Foreground="#999999"
+                                                Cursor="Hand"
+                                                Click="BtnRemoveIndex_Click"
+                                                Tag="{Binding Code}" />
+                                        <StackPanel VerticalAlignment="Center" Margin="0,4,0,0">
+                                            <TextBlock Text="{Binding Name}"
+                                                       Foreground="#1A1A1A"
+                                                       FontSize="13"
+                                                       FontWeight="SemiBold"
+                                                       TextWrapping="Wrap"
+                                                       HorizontalAlignment="Center" />
+                                            <Border Background="White"
+                                                    CornerRadius="8"
+                                                    Padding="6,2"
+                                                    Margin="0,6,0,0"
+                                                    HorizontalAlignment="Center">
+                                                <TextBlock Text="{Binding DisplayCode}"
+                                                           Foreground="#888888"
+                                                           FontSize="11"
+                                                           HorizontalAlignment="Center" />
+                                            </Border>
+                                        </StackPanel>
+                                    </Grid>
+                                </Border>
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+
+                    <Border Height="1" Background="#E5E5E5" Margin="0,12,0,10" />
+
+                    <!-- Selectable pills -->
+                    <ItemsControl ItemsSource="{Binding IndexOptions}">
+                        <ItemsControl.ItemsPanel>
+                            <ItemsPanelTemplate>
+                                <WrapPanel />
+                            </ItemsPanelTemplate>
+                        </ItemsControl.ItemsPanel>
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate>
+                                <Button Margin="0,0,6,6"
+                                        Cursor="Hand"
+                                        Click="BtnToggleIndex_Click"
+                                        Tag="{Binding Code}"
+                                        ToolTip="{Binding DisplayCode}">
+                                    <Button.Template>
+                                        <ControlTemplate TargetType="Button">
+                                            <Border x:Name="Bd"
+                                                    Background="White"
+                                                    BorderBrush="#CCCCCC"
+                                                    BorderThickness="1"
+                                                    CornerRadius="14"
+                                                    Padding="10,5">
+                                                <StackPanel Orientation="Horizontal">
+                                                    <TextBlock Text="{Binding CheckMark}"
+                                                               Foreground="#666666"
+                                                               FontSize="11"
+                                                               Margin="0,0,4,0"
+                                                               VerticalAlignment="Center" />
+                                                    <TextBlock Text="{Binding Name}"
+                                                               Foreground="#444444"
+                                                               FontSize="12"
+                                                               VerticalAlignment="Center" />
+                                                </StackPanel>
+                                            </Border>
+                                            <ControlTemplate.Triggers>
+                                                <DataTrigger Binding="{Binding IsSelected}" Value="True">
+                                                    <Setter TargetName="Bd" Property="Background" Value="#FFF0F0F0" />
+                                                    <Setter TargetName="Bd" Property="BorderBrush" Value="#AAAAAA" />
+                                                </DataTrigger>
+                                            </ControlTemplate.Triggers>
+                                        </ControlTemplate>
+                                    </Button.Template>
+                                </Button>
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+                </StackPanel>
+            </Border>
+
+            <!-- Group list -->
+            <ListBox x:Name="GroupList"
+                     Grid.Row="2"
+                     BorderThickness="0"
+                     Background="Transparent"
+                     ScrollViewer.HorizontalScrollBarVisibility="Disabled">
+                <ListBox.ItemContainerStyle>
+                    <Style TargetType="ListBoxItem">
+                        <Setter Property="Padding" Value="0" />
+                        <Setter Property="Margin" Value="0,0,0,6" />
+                        <Setter Property="HorizontalContentAlignment" Value="Stretch" />
+                        <Setter Property="Template">
+                            <Setter.Value>
+                                <ControlTemplate TargetType="ListBoxItem">
+                                    <Border Background="#F0F0F0"
+                                            CornerRadius="8"
+                                            Padding="10,8">
+                                        <ContentPresenter />
+                                    </Border>
+                                </ControlTemplate>
+                            </Setter.Value>
+                        </Setter>
+                    </Style>
+                </ListBox.ItemContainerStyle>
+                <ListBox.ItemTemplate>
+                    <DataTemplate>
+                        <Grid>
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="Auto" />
+                                <ColumnDefinition Width="Auto" />
+                            </Grid.ColumnDefinitions>
+                            <TextBlock Text="{Binding Name}"
+                                       Foreground="#1A1A1A"
+                                       FontSize="14"
+                                       VerticalAlignment="Center" />
+                            <Button Grid.Column="1"
+                                    Content="重命名"
+                                    Margin="8,0,4,0"
+                                    Padding="8,4"
+                                    Cursor="Hand"
+                                    Click="BtnRename_Click"
+                                    Tag="{Binding}" />
+                            <Button Grid.Column="2"
+                                    Content="删除"
+                                    Padding="8,4"
+                                    Foreground="#FF453A"
+                                    Cursor="Hand"
+                                    Click="BtnDelete_Click"
+                                    Tag="{Binding}" />
+                        </Grid>
+                    </DataTemplate>
+                </ListBox.ItemTemplate>
+            </ListBox>
+
+            <Button Grid.Row="3"
+                    Content="完成"
+                    Height="36"
+                    Margin="0,12,0,0"
+                    Background="#1A1A1A"
+                    Foreground="White"
+                    BorderThickness="0"
+                    Cursor="Hand"
+                    Click="BtnClose_Click">
+                <Button.Template>
+                    <ControlTemplate TargetType="Button">
+                        <Border Background="{TemplateBinding Background}"
+                                CornerRadius="8">
+                            <ContentPresenter HorizontalAlignment="Center"
+                                              VerticalAlignment="Center" />
+                        </Border>
+                    </ControlTemplate>
+                </Button.Template>
+            </Button>
+        </Grid>
+    </Border>
+</Window>

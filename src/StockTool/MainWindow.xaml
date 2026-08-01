@@ -208,129 +208,308 @@
                 </Grid>
             </Border>
 
-            <!-- Stock List -->
+            <!-- Content: Indices + Groups + List -->
             <Grid Grid.Row="1">
-                <ScrollViewer VerticalScrollBarVisibility="Auto">
-                    <ItemsControl x:Name="StockList"
-                                  ItemsSource="{Binding Stocks}"
-                                  AllowDrop="True"
-                                  PreviewMouseLeftButtonDown="StockList_PreviewMouseLeftButtonDown"
-                                  PreviewMouseMove="StockList_PreviewMouseMove"
-                                  Drop="StockList_Drop"
-                                  GiveFeedback="StockList_GiveFeedback"
-                                  DragOver="StockList_DragOver">
-                        <ItemsControl.ItemTemplate>
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto" />
+                    <RowDefinition Height="Auto" />
+                    <RowDefinition Height="Auto" />
+                    <RowDefinition Height="*" />
+                </Grid.RowDefinitions>
+
+                <!-- Indices -->
+                <ItemsControl Grid.Row="0"
+                              ItemsSource="{Binding Indices}"
+                              Margin="6,6,6,2">
+                    <ItemsControl.ItemsPanel>
+                        <ItemsPanelTemplate>
+                            <UniformGrid Rows="1" Columns="4" />
+                        </ItemsPanelTemplate>
+                    </ItemsControl.ItemsPanel>
+                    <ItemsControl.ItemTemplate>
                         <DataTemplate>
-                            <Border Height="52"
-                                    BorderBrush="#20FFFFFF"
-                                    BorderThickness="0,0,0,1"
-                                    Background="Transparent"
-                                    Tag="{Binding}"
-                                    MouseLeftButtonUp="StockItem_Click">
-                                <Border.ContextMenu>
-                                    <ContextMenu Style="{StaticResource ContextMenuStyle}"
-                                                 Opened="ContextMenu_Opened">
-                                        <MenuItem Header="↑  上移"
-                                                  Style="{StaticResource ContextMenuItemStyle}"
-                                                  Click="ContextMenu_MoveUp" />
-                                        <MenuItem Header="↓  下移"
-                                                  Style="{StaticResource ContextMenuItemStyle}"
-                                                  Click="ContextMenu_MoveDown" />
-                                        <MenuItem Header="✎  重命名"
-                                                  Style="{StaticResource ContextMenuItemStyle}"
-                                                  Click="ContextMenu_Rename" />
-                                        <MenuItem Header="✕  删除"
-                                                  Style="{StaticResource ContextMenuDeleteItemStyle}"
-                                                  Click="ContextMenu_Delete" />
-                                    </ContextMenu>
-                                </Border.ContextMenu>
-
-                                <Grid>
-                                    <Grid.ColumnDefinitions>
-                                        <ColumnDefinition Width="120" />
-                                        <ColumnDefinition Width="*" />
-                                        <ColumnDefinition Width="80" />
-                                    </Grid.ColumnDefinitions>
-
-                                    <!-- Left: Name + Code -->
-                                    <StackPanel Grid.Column="0"
-                                                VerticalAlignment="Center"
-                                                Margin="10,0,0,0">
-                                        <TextBlock Text="{Binding DisplayName}"
-                                                   Foreground="#1A1A1A"
-                                                   FontSize="{Binding DataContext.FontSize, RelativeSource={RelativeSource AncestorType=Window}, Converter={StaticResource FontSizeConverter}}"
-                                                   FontWeight="Bold" />
-                                        <StackPanel Orientation="Horizontal" Margin="0,2,0,0">
-                                            <Border CornerRadius="3"
-                                                    Background="#3050A0FF"
-                                                    Padding="3,1"
-                                                    Margin="0,0,4,0"
-                                                    VerticalAlignment="Center"
-                                                    Visibility="{Binding DataContext.ShowMarketTag, RelativeSource={RelativeSource AncestorType=Window}, Converter={StaticResource BoolToVisConverter}}">
-                                                <TextBlock Text="{Binding Market}"
-                                                           Foreground="#80D0FF"
-                                                           FontSize="{Binding DataContext.FontSize, RelativeSource={RelativeSource AncestorType=Window}, Converter={StaticResource FontSizeConverter}, ConverterParameter=-5}" />
-                                            </Border>
-                                            <TextBlock Text="{Binding CodeNumeric}"
-                                                       Foreground="#888888"
-                                                       FontSize="{Binding DataContext.FontSize, RelativeSource={RelativeSource AncestorType=Window}, Converter={StaticResource FontSizeConverter}, ConverterParameter=-3}" />
-                                        </StackPanel>
-                                    </StackPanel>
-
-                                    <!-- Middle: Sparkline -->
-                                    <controls:SparklineControl Grid.Column="1"
-                                                                Points="{Binding IntradayPoints}"
-                                                                BaseLine="{Binding YesterdayClose}"
-                                                                IsUp="{Binding IsUp}"
-                                                                Margin="4,4" />
-
-                                    <!-- Right: Price + Change% -->
-                                    <StackPanel Grid.Column="2"
-                                                VerticalAlignment="Center"
-                                                HorizontalAlignment="Right"
-                                                Margin="0,0,12,0">
-                                        <TextBlock Text="{Binding CurrentPrice, StringFormat={}{0:F2}}"
-                                                   FontSize="{Binding DataContext.FontSize, RelativeSource={RelativeSource AncestorType=Window}, Converter={StaticResource FontSizeConverter}, ConverterParameter=1}"
-                                                   FontWeight="SemiBold"
-                                                   HorizontalAlignment="Right"
-                                                   Foreground="#1A1A1A" />
-                                        <TextBlock FontSize="{Binding DataContext.FontSize, RelativeSource={RelativeSource AncestorType=Window}, Converter={StaticResource FontSizeConverter}, ConverterParameter=-1}"
-                                                   FontWeight="SemiBold"
-                                                   HorizontalAlignment="Right"
-                                                   Margin="0,2,0,0">
-                                            <TextBlock.Style>
-                                                <Style TargetType="TextBlock">
-                                                    <Setter Property="Foreground" Value="#D93025" />
-                                                    <Style.Triggers>
-                                                        <DataTrigger Binding="{Binding Path=ChangePercent, Converter={StaticResource NegativeConverter}}"
-                                                                     Value="True">
-                                                            <Setter Property="Foreground" Value="#1A8C3F" />
-                                                        </DataTrigger>
-                                                        <DataTrigger Binding="{Binding ChangePercent}" Value="0">
-                                                            <Setter Property="Foreground" Value="#888888" />
-                                                        </DataTrigger>
-                                                    </Style.Triggers>
-                                                </Style>
-                                            </TextBlock.Style>
-                                            <Run Text="{Binding ChangePercent, StringFormat={}{0:+0.00;-0.00;0.00}}" />
-                                            <Run Text="%" />
-                                        </TextBlock>
-                                    </StackPanel>
-                                </Grid>
-                            </Border>
+                            <StackPanel HorizontalAlignment="Center" Margin="2,4">
+                                <TextBlock Text="{Binding Name}"
+                                           Foreground="#888888"
+                                           FontSize="11"
+                                           HorizontalAlignment="Center" />
+                                <TextBlock Text="{Binding Price, StringFormat={}{0:F2}}"
+                                           FontSize="16"
+                                           FontWeight="SemiBold"
+                                           HorizontalAlignment="Center"
+                                           Margin="0,2,0,0">
+                                    <TextBlock.Style>
+                                        <Style TargetType="TextBlock">
+                                            <Setter Property="Foreground" Value="#D93025" />
+                                            <Style.Triggers>
+                                                <DataTrigger Binding="{Binding Path=ChangePercent, Converter={StaticResource NegativeConverter}}"
+                                                             Value="True">
+                                                    <Setter Property="Foreground" Value="#1A8C3F" />
+                                                </DataTrigger>
+                                                <DataTrigger Binding="{Binding ChangePercent}" Value="0">
+                                                    <Setter Property="Foreground" Value="#888888" />
+                                                </DataTrigger>
+                                            </Style.Triggers>
+                                        </Style>
+                                    </TextBlock.Style>
+                                </TextBlock>
+                                <TextBlock FontSize="11"
+                                           HorizontalAlignment="Center"
+                                           Margin="0,1,0,0">
+                                    <TextBlock.Style>
+                                        <Style TargetType="TextBlock">
+                                            <Setter Property="Foreground" Value="#D93025" />
+                                            <Style.Triggers>
+                                                <DataTrigger Binding="{Binding Path=ChangePercent, Converter={StaticResource NegativeConverter}}"
+                                                             Value="True">
+                                                    <Setter Property="Foreground" Value="#1A8C3F" />
+                                                </DataTrigger>
+                                                <DataTrigger Binding="{Binding ChangePercent}" Value="0">
+                                                    <Setter Property="Foreground" Value="#888888" />
+                                                </DataTrigger>
+                                            </Style.Triggers>
+                                        </Style>
+                                    </TextBlock.Style>
+                                    <Run Text="{Binding Change, StringFormat={}{0:+0.00;-0.00;0.00}, Mode=OneWay}" />
+                                    <Run Text=" " />
+                                    <Run Text="{Binding ChangePercent, StringFormat={}{0:+0.00;-0.00;0.00}%, Mode=OneWay}" />
+                                </TextBlock>
+                            </StackPanel>
                         </DataTemplate>
                     </ItemsControl.ItemTemplate>
                 </ItemsControl>
-            </ScrollViewer>
 
-            <!-- Empty state -->
-            <TextBlock Text="暂无自选股，点击 + 添加"
-                       Foreground="#AAAAAA"
-                       FontSize="14"
-                       HorizontalAlignment="Center"
-                       VerticalAlignment="Center"
-                       Visibility="{Binding Stocks.Count, Converter={StaticResource ZeroToVisibleConverter}}" />
-        </Grid>
+                <!-- Group tabs -->
+                <Grid Grid.Row="1" Margin="8,4,8,0">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="Auto" />
+                    </Grid.ColumnDefinitions>
+                    <ListBox ItemsSource="{Binding Groups}"
+                             SelectedValue="{Binding SelectedGroupId, Mode=TwoWay}"
+                             SelectedValuePath="Id"
+                             BorderThickness="0"
+                             Background="Transparent"
+                             ScrollViewer.HorizontalScrollBarVisibility="Auto"
+                             ScrollViewer.VerticalScrollBarVisibility="Disabled"
+                             Padding="0">
+                        <ListBox.ItemsPanel>
+                            <ItemsPanelTemplate>
+                                <StackPanel Orientation="Horizontal" />
+                            </ItemsPanelTemplate>
+                        </ListBox.ItemsPanel>
+                        <ListBox.ItemContainerStyle>
+                            <Style TargetType="ListBoxItem">
+                                <Setter Property="FocusVisualStyle" Value="{x:Null}" />
+                                <Setter Property="Padding" Value="2,4" />
+                                <Setter Property="Margin" Value="0,0,10,0" />
+                                <Setter Property="Cursor" Value="Hand" />
+                                <Setter Property="Template">
+                                    <Setter.Value>
+                                        <ControlTemplate TargetType="ListBoxItem">
+                                            <StackPanel Background="Transparent">
+                                                <TextBlock x:Name="TabText"
+                                                           Text="{Binding Name}"
+                                                           FontSize="13"
+                                                           Foreground="#888888" />
+                                                <Border x:Name="Underline"
+                                                        Height="2"
+                                                        Margin="0,3,0,0"
+                                                        Background="#D93025"
+                                                        CornerRadius="1"
+                                                        Visibility="Collapsed" />
+                                            </StackPanel>
+                                            <ControlTemplate.Triggers>
+                                                <Trigger Property="IsSelected" Value="True">
+                                                    <Setter TargetName="TabText" Property="Foreground" Value="#1A1A1A" />
+                                                    <Setter TargetName="TabText" Property="FontWeight" Value="SemiBold" />
+                                                    <Setter TargetName="Underline" Property="Visibility" Value="Visible" />
+                                                </Trigger>
+                                            </ControlTemplate.Triggers>
+                                        </ControlTemplate>
+                                    </Setter.Value>
+                                </Setter>
+                            </Style>
+                        </ListBox.ItemContainerStyle>
+                    </ListBox>
+                    <StackPanel Grid.Column="1" Orientation="Horizontal">
+                        <Button Content="+"
+                                Style="{StaticResource TitleBarButtonStyle}"
+                                Width="28" Height="28"
+                                FontSize="16"
+                                ToolTip="新建分组"
+                                Click="BtnAddGroup_Click" />
+                        <Button Content="✎"
+                                Style="{StaticResource TitleBarButtonStyle}"
+                                Width="28" Height="28"
+                                FontSize="13"
+                                ToolTip="管理分组"
+                                Click="BtnManageGroups_Click" />
+                    </StackPanel>
+                </Grid>
+
+                <!-- Column header -->
+                <Grid Grid.Row="2" Margin="10,8,12,4">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="120" />
+                        <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="80" />
+                    </Grid.ColumnDefinitions>
+                    <TextBlock Text="名称"
+                               Foreground="#999999"
+                               FontSize="11"
+                               VerticalAlignment="Center" />
+                    <TextBlock Grid.Column="1"
+                               Text="趋势"
+                               Foreground="#999999"
+                               FontSize="11"
+                               HorizontalAlignment="Center"
+                               VerticalAlignment="Center" />
+                    <Button Grid.Column="2"
+                            HorizontalAlignment="Right"
+                            Cursor="Hand"
+                            Click="BtnSortPrice_Click"
+                            Background="Transparent"
+                            BorderThickness="0"
+                            Padding="0"
+                            ToolTip="切换涨幅排序 / 默认排序">
+                        <Button.Template>
+                            <ControlTemplate TargetType="Button">
+                                <StackPanel Orientation="Horizontal">
+                                    <TextBlock Text="现价/涨幅"
+                                               Foreground="#999999"
+                                               FontSize="11" />
+                                    <TextBlock Text="{Binding SortArrowText}"
+                                               Foreground="#999999"
+                                               FontSize="10"
+                                               Margin="2,0,0,0"
+                                               VerticalAlignment="Center" />
+                                </StackPanel>
+                            </ControlTemplate>
+                        </Button.Template>
+                    </Button>
+                </Grid>
+
+                <!-- Stock list -->
+                <Grid Grid.Row="3">
+                    <ScrollViewer VerticalScrollBarVisibility="Auto">
+                        <ItemsControl x:Name="StockList"
+                                      ItemsSource="{Binding VisibleStocks}"
+                                      AllowDrop="True"
+                                      PreviewMouseLeftButtonDown="StockList_PreviewMouseLeftButtonDown"
+                                      PreviewMouseMove="StockList_PreviewMouseMove"
+                                      Drop="StockList_Drop"
+                                      GiveFeedback="StockList_GiveFeedback"
+                                      DragOver="StockList_DragOver">
+                            <ItemsControl.ItemTemplate>
+                            <DataTemplate>
+                                <Border Height="52"
+                                        BorderBrush="#10000000"
+                                        BorderThickness="0,0,0,1"
+                                        Background="Transparent"
+                                        Tag="{Binding}"
+                                        MouseLeftButtonUp="StockItem_Click">
+                                    <Border.ContextMenu>
+                                        <ContextMenu Style="{StaticResource ContextMenuStyle}"
+                                                     Opened="ContextMenu_Opened">
+                                            <MenuItem Header="↑  上移"
+                                                      Style="{StaticResource ContextMenuItemStyle}"
+                                                      Click="ContextMenu_MoveUp" />
+                                            <MenuItem Header="↓  下移"
+                                                      Style="{StaticResource ContextMenuItemStyle}"
+                                                      Click="ContextMenu_MoveDown" />
+                                            <MenuItem Header="✎  重命名"
+                                                      Style="{StaticResource ContextMenuItemStyle}"
+                                                      Click="ContextMenu_Rename" />
+                                            <MenuItem Header="✕  删除"
+                                                      Style="{StaticResource ContextMenuDeleteItemStyle}"
+                                                      Click="ContextMenu_Delete" />
+                                        </ContextMenu>
+                                    </Border.ContextMenu>
+
+                                    <Grid>
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="120" />
+                                            <ColumnDefinition Width="*" />
+                                            <ColumnDefinition Width="80" />
+                                        </Grid.ColumnDefinitions>
+
+                                        <StackPanel Grid.Column="0"
+                                                    VerticalAlignment="Center"
+                                                    Margin="10,0,0,0">
+                                            <TextBlock Text="{Binding DisplayName}"
+                                                       Foreground="#1A1A1A"
+                                                       FontSize="{Binding DataContext.FontSize, RelativeSource={RelativeSource AncestorType=Window}, Converter={StaticResource FontSizeConverter}}"
+                                                       FontWeight="Bold" />
+                                            <StackPanel Orientation="Horizontal" Margin="0,2,0,0">
+                                                <Border CornerRadius="3"
+                                                        Background="#3050A0FF"
+                                                        Padding="3,1"
+                                                        Margin="0,0,4,0"
+                                                        VerticalAlignment="Center"
+                                                        Visibility="{Binding DataContext.ShowMarketTag, RelativeSource={RelativeSource AncestorType=Window}, Converter={StaticResource BoolToVisConverter}}">
+                                                    <TextBlock Text="{Binding Market}"
+                                                               Foreground="#80D0FF"
+                                                               FontSize="{Binding DataContext.FontSize, RelativeSource={RelativeSource AncestorType=Window}, Converter={StaticResource FontSizeConverter}, ConverterParameter=-5}" />
+                                                </Border>
+                                                <TextBlock Text="{Binding CodeNumeric}"
+                                                           Foreground="#888888"
+                                                           FontSize="{Binding DataContext.FontSize, RelativeSource={RelativeSource AncestorType=Window}, Converter={StaticResource FontSizeConverter}, ConverterParameter=-3}" />
+                                            </StackPanel>
+                                        </StackPanel>
+
+                                        <controls:SparklineControl Grid.Column="1"
+                                                                    Points="{Binding IntradayPoints}"
+                                                                    BaseLine="{Binding YesterdayClose}"
+                                                                    IsUp="{Binding IsUp}"
+                                                                    Margin="4,4" />
+
+                                        <StackPanel Grid.Column="2"
+                                                    VerticalAlignment="Center"
+                                                    HorizontalAlignment="Right"
+                                                    Margin="0,0,12,0">
+                                            <TextBlock Text="{Binding CurrentPrice, StringFormat={}{0:F2}}"
+                                                       FontSize="{Binding DataContext.FontSize, RelativeSource={RelativeSource AncestorType=Window}, Converter={StaticResource FontSizeConverter}, ConverterParameter=1}"
+                                                       FontWeight="SemiBold"
+                                                       HorizontalAlignment="Right"
+                                                       Foreground="#1A1A1A" />
+                                            <TextBlock FontSize="{Binding DataContext.FontSize, RelativeSource={RelativeSource AncestorType=Window}, Converter={StaticResource FontSizeConverter}, ConverterParameter=-1}"
+                                                       FontWeight="SemiBold"
+                                                       HorizontalAlignment="Right"
+                                                       Margin="0,2,0,0">
+                                                <TextBlock.Style>
+                                                    <Style TargetType="TextBlock">
+                                                        <Setter Property="Foreground" Value="#D93025" />
+                                                        <Style.Triggers>
+                                                            <DataTrigger Binding="{Binding Path=ChangePercent, Converter={StaticResource NegativeConverter}}"
+                                                                         Value="True">
+                                                                <Setter Property="Foreground" Value="#1A8C3F" />
+                                                            </DataTrigger>
+                                                            <DataTrigger Binding="{Binding ChangePercent}" Value="0">
+                                                                <Setter Property="Foreground" Value="#888888" />
+                                                            </DataTrigger>
+                                                        </Style.Triggers>
+                                                    </Style>
+                                                </TextBlock.Style>
+                                                <Run Text="{Binding ChangePercent, StringFormat={}{0:+0.00;-0.00;0.00}}" />
+                                                <Run Text="%" />
+                                            </TextBlock>
+                                        </StackPanel>
+                                    </Grid>
+                                </Border>
+                            </DataTemplate>
+                            </ItemsControl.ItemTemplate>
+                        </ItemsControl>
+                    </ScrollViewer>
+
+                    <TextBlock Text="当前分组暂无股票"
+                               Foreground="#AAAAAA"
+                               FontSize="14"
+                               HorizontalAlignment="Center"
+                               VerticalAlignment="Center"
+                               Visibility="{Binding VisibleStocks.Count, Converter={StaticResource ZeroToVisibleConverter}}" />
+                </Grid>
+            </Grid>
 
         <!-- Status Bar -->
         <Border Grid.Row="2"

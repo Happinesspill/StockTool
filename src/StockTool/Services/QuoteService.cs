@@ -12,14 +12,23 @@ public class QuoteService
     private readonly EastMoneyClient _client;
     private readonly DispatcherTimer _timer;
     private readonly ObservableCollection<StockItem> _stocks;
+    private readonly ObservableCollection<IndexItem> _indices;
     private readonly Func<int> _getInterval;
+    private readonly Action? _onUpdated;
     private int _tickGuard;
 
-    public QuoteService(EastMoneyClient client, ObservableCollection<StockItem> stocks, Func<int> getInterval)
+    public QuoteService(
+        EastMoneyClient client,
+        ObservableCollection<StockItem> stocks,
+        ObservableCollection<IndexItem> indices,
+        Func<int> getInterval,
+        Action? onUpdated = null)
     {
         _client = client;
         _stocks = stocks;
+        _indices = indices;
         _getInterval = getInterval;
+        _onUpdated = onUpdated;
         _timer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(1) };
         _timer.Tick += async (s, e) => await TickAsync();
     }
@@ -30,63 +39,71 @@ public class QuoteService
 
     private async Task TickAsync()
     {
-        // 防重入：上一次请求未完成时跳过本次
         if (Interlocked.Exchange(ref _tickGuard, 1) == 1) return;
 
         try
         {
-            // capture codes on UI thread before any await
-            var codes = _stocks.Select(s => s.Code).ToList();
-            if (codes.Count == 0) return;
+            var stockCodes = _stocks.Select(s => s.Code)
+                .Where(c => !string.IsNullOrEmpty(c))
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToList();
+            var indexCodes = _indices.Select(i => i.Code)
+                .Where(c => !string.IsNullOrEmpty(c))
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToList();
 
-            List<QuoteItem>? results;
-            try
-            {
-                results = await _client.GetBatchQuotesAsync(codes);
-            }
-            catch
-            {
-                return; // silent failure, keep last data
-            }
+            if (stockCodes.Count == 0 && indexCodes.Count == 0) return;
 
-            var map = new Dictionary<string, QuoteItem>(StringComparer.OrdinalIgnoreCase);
-            foreach (var r in results)
+            // A 股指数走腾讯/新浪（GetBatchQuotesAsync）；IX 全球指数走东财 push2
+            var domesticIndexCodes = indexCodes
+                .Where(c => !c.StartsWith("IX", StringComparison.OrdinalIgnoreCase))
+                .ToList();
+            var globalIndexCodes = indexCodes
+                .Where(c => c.StartsWith("IX", StringComparison.OrdinalIgnoreCase))
+                .ToList();
+
+            var batchCodes = stockCodes
+                .Concat(domesticIndexCodes)
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToList();
+
+            Task<List<QuoteItem>> batchTask = batchCodes.Count > 0
+                ? _client.GetBatchQuotesAsync(batchCodes)
+                : Task.FromResult(new List<QuoteItem>());
+            Task<List<QuoteItem>> globalTask = globalIndexCodes.Count > 0
+                ? _client.GetPush2QuotesAsync(globalIndexCodes)
+                : Task.FromResult(new List<QuoteItem>());
+
+            List<QuoteItem> batchResults = [];
+            List<QuoteItem> globalResults = [];
+            try { batchResults = await batchTask; } catch { /* keep last */ }
+            try { globalResults = await globalTask; } catch { /* keep last */ }
+
+            var quoteMap = BuildQuoteMap(batchResults);
+            foreach (var r in globalResults)
             {
                 if (string.IsNullOrEmpty(r.F12)) continue;
-                string key;
                 try
                 {
-                    key = EastMoneyClient.InternalCodeFromSecId($"{r.F13}.{r.F12}");
+                    string key = EastMoneyClient.InternalCodeFromSecId($"{r.F13}.{r.F12}");
+                    quoteMap[key] = r;
                 }
                 catch
                 {
-                    continue;
+                    // ignore
                 }
-                map[key] = r;
-
-                // 兼容港股补零差异：HK1810 / HK01810
-                if (key.StartsWith("HK", StringComparison.OrdinalIgnoreCase))
-                {
-                    string digits = r.F12 ?? "";
-                    map[$"HK{digits.PadLeft(5, '0')}"] = r;
-                    map[$"HK{digits.TrimStart('0').PadLeft(1, '0')}"] = r; // 保留至少 1 位
-                    if (digits.Length > 0)
-                        map[$"HK{digits}"] = r;
-                }
+                quoteMap[$"{r.F13}.{r.F12}"] = r;
             }
 
-            // dispatch all UI updates to the UI thread
-            await Application.Current.Dispatcher.InvokeAsync(() =>
+            var dispatcher = Application.Current?.Dispatcher;
+            if (dispatcher == null) return;
+
+            await dispatcher.InvokeAsync(() =>
             {
                 foreach (var stock in _stocks)
                 {
-                    if (!map.TryGetValue(stock.Code, out var quote))
-                    {
-                        // 再试：去掉前缀只比数字代码
-                        quote = map.Values.FirstOrDefault(q =>
-                            string.Equals(q.F12, stock.CodeNumeric, StringComparison.OrdinalIgnoreCase));
-                        if (quote == null) continue;
-                    }
+                    if (!TryGetQuote(quoteMap, stock.Code, stock.CodeNumeric, out var quote))
+                        continue;
 
                     stock.Name = quote.F14 ?? stock.Name;
                     stock.CurrentPrice = quote.F2;
@@ -98,6 +115,20 @@ public class QuoteService
                     stock.Volume = quote.F5;
                     stock.Turnover = quote.F6;
                 }
+
+                foreach (var index in _indices)
+                {
+                    if (!TryResolveIndexQuote(quoteMap, index.Code, out var quote))
+                        continue;
+
+                    index.Price = quote.F2;
+                    index.ChangePercent = quote.F3;
+                    index.Change = quote.F4 != 0
+                        ? quote.F4
+                        : (quote.F17 > 0 ? quote.F2 - quote.F17 : 0);
+                }
+
+                _onUpdated?.Invoke();
             });
         }
         finally
@@ -106,6 +137,78 @@ public class QuoteService
         }
     }
 
-    /// <summary>立即拉一次行情（启动时用）</summary>
+    private static bool TryResolveIndexQuote(
+        Dictionary<string, QuoteItem> map,
+        string code,
+        out QuoteItem quote)
+    {
+        string numeric = code.Length > 2 ? code[2..] : code;
+        // IX100.NDX → numeric 应为 NDX
+        if (code.StartsWith("IX", StringComparison.OrdinalIgnoreCase) && code.Contains('.'))
+            numeric = code[(code.LastIndexOf('.') + 1)..];
+
+        if (TryGetQuote(map, code, numeric, out quote))
+            return true;
+
+        try
+        {
+            string secid = EastMoneyClient.ToSecId(code);
+            if (map.TryGetValue(secid, out quote!))
+                return true;
+        }
+        catch
+        {
+            // ignore
+        }
+
+        quote = null!;
+        return false;
+    }
+
+    private static Dictionary<string, QuoteItem> BuildQuoteMap(List<QuoteItem> results)
+    {
+        var map = new Dictionary<string, QuoteItem>(StringComparer.OrdinalIgnoreCase);
+        foreach (var r in results)
+        {
+            if (string.IsNullOrEmpty(r.F12)) continue;
+            string key;
+            try
+            {
+                key = EastMoneyClient.InternalCodeFromSecId($"{r.F13}.{r.F12}");
+            }
+            catch
+            {
+                continue;
+            }
+            map[key] = r;
+            map[$"{r.F13}.{r.F12}"] = r;
+
+            if (key.StartsWith("HK", StringComparison.OrdinalIgnoreCase))
+            {
+                string digits = r.F12 ?? "";
+                map[$"HK{digits.PadLeft(5, '0')}"] = r;
+                map[$"HK{digits.TrimStart('0').PadLeft(1, '0')}"] = r;
+                if (digits.Length > 0)
+                    map[$"HK{digits}"] = r;
+            }
+        }
+        return map;
+    }
+
+    private static bool TryGetQuote(
+        Dictionary<string, QuoteItem> map,
+        string code,
+        string codeNumeric,
+        out QuoteItem quote)
+    {
+        if (map.TryGetValue(code, out quote!))
+            return true;
+
+        quote = map.Values.FirstOrDefault(q =>
+            string.Equals(q.F12, codeNumeric, StringComparison.OrdinalIgnoreCase)
+            || string.Equals(q.F12?.PadLeft(6, '0'), codeNumeric.PadLeft(6, '0'), StringComparison.OrdinalIgnoreCase))!;
+        return quote != null;
+    }
+
     public Task RefreshNowAsync() => TickAsync();
 }

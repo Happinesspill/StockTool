@@ -9,6 +9,7 @@ public class StockItem : INotifyPropertyChanged
     private string _customName = string.Empty;
     private string _code = string.Empty;
     private string _market = string.Empty;
+    private string _groupId = string.Empty;
     private decimal _currentPrice;
     private decimal _changePercent;
     private decimal _yesterdayClose;
@@ -49,6 +50,12 @@ public class StockItem : INotifyPropertyChanged
     {
         get => _market;
         set { _market = value; OnPropertyChanged(); }
+    }
+
+    public string GroupId
+    {
+        get => _groupId;
+        set { _groupId = value; OnPropertyChanged(); }
     }
 
     public decimal CurrentPrice

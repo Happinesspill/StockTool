@@ -135,9 +135,101 @@ public partial class MainWindow : Window
 
     // ── Drag-Drop Reorder ───────────────────────────
 
+    private void BtnSortPrice_Click(object sender, RoutedEventArgs e)
+    {
+        VM.TogglePriceSort();
+        e.Handled = true;
+    }
+
+    private void BtnAddGroup_Click(object sender, RoutedEventArgs e)
+    {
+        string? name = PromptSimpleText("新建分组", "分组名称");
+        if (name == null) return;
+        if (VM.AddGroup(name) == null)
+            MessageBox.Show(this, "创建失败（名称无效或已存在）", "提示", MessageBoxButton.OK, MessageBoxImage.Information);
+    }
+
+    private void BtnManageGroups_Click(object sender, RoutedEventArgs e)
+    {
+        var dlg = new ManageGroupsWindow(VM) { Owner = this };
+        dlg.ShowDialog();
+    }
+
+    private string? PromptSimpleText(string title, string placeholder)
+    {
+        var dialog = new Window
+        {
+            Title = title,
+            Width = 300,
+            Height = 150,
+            WindowStyle = WindowStyle.None,
+            AllowsTransparency = true,
+            Background = Brushes.Transparent,
+            ResizeMode = ResizeMode.NoResize,
+            Owner = this,
+            WindowStartupLocation = WindowStartupLocation.CenterOwner,
+            Topmost = true
+        };
+
+        string? result = null;
+        var box = new TextBox
+        {
+            FontSize = 14,
+            Margin = new Thickness(16, 12, 16, 8),
+            Height = 32,
+            VerticalContentAlignment = VerticalAlignment.Center,
+            Tag = placeholder
+        };
+
+        var ok = new Button { Content = "确定", Width = 72, Height = 30, Margin = new Thickness(0, 0, 8, 0) };
+        var cancel = new Button { Content = "取消", Width = 72, Height = 30 };
+        ok.Click += (_, _) => { result = box.Text; dialog.DialogResult = true; };
+        cancel.Click += (_, _) => dialog.DialogResult = false;
+        box.KeyDown += (_, ke) =>
+        {
+            if (ke.Key == Key.Enter) { result = box.Text; dialog.DialogResult = true; }
+            if (ke.Key == Key.Escape) dialog.DialogResult = false;
+        };
+
+        var buttons = new StackPanel
+        {
+            Orientation = Orientation.Horizontal,
+            HorizontalAlignment = HorizontalAlignment.Right,
+            Margin = new Thickness(16, 0, 16, 16)
+        };
+        buttons.Children.Add(ok);
+        buttons.Children.Add(cancel);
+
+        dialog.Content = new Border
+        {
+            Background = new SolidColorBrush(Color.FromArgb(0xF5, 0xFF, 0xFF, 0xFF)),
+            BorderBrush = new SolidColorBrush(Color.FromRgb(0xCC, 0xCC, 0xCC)),
+            BorderThickness = new Thickness(1),
+            CornerRadius = new CornerRadius(10),
+            Child = new StackPanel
+            {
+                Children =
+                {
+                    new TextBlock
+                    {
+                        Text = title,
+                        FontSize = 14,
+                        FontWeight = FontWeights.SemiBold,
+                        Margin = new Thickness(16, 14, 16, 0),
+                        Foreground = new SolidColorBrush(Color.FromRgb(0x1A, 0x1A, 0x1A))
+                    },
+                    box,
+                    buttons
+                }
+            }
+        };
+        dialog.Loaded += (_, _) => box.Focus();
+        return dialog.ShowDialog() == true ? result : null;
+    }
+
     private void StockList_PreviewMouseLeftButtonDown(object sender, MouseButtonEventArgs e)
     {
-        if (_suppressListInput || VM.SelectedStock != null)
+        if (_suppressListInput || VM.SelectedStock != null || !VM.CanReorder)
         {
             _draggedItem = null;
             return;
@@ -149,7 +241,7 @@ public partial class MainWindow : Window
 
     private void StockList_PreviewMouseMove(object sender, MouseEventArgs e)
     {
-        if (_suppressListInput || VM.SelectedStock != null) return;
+        if (_suppressListInput || VM.SelectedStock != null || !VM.CanReorder) return;
         if (_draggedItem == null || e.LeftButton != MouseButtonState.Pressed) return;
 
         var pos = e.GetPosition(null);
@@ -164,7 +256,7 @@ public partial class MainWindow : Window
 
     private void StockList_DragOver(object sender, DragEventArgs e)
     {
-        if (_suppressListInput || VM.SelectedStock != null)
+        if (_suppressListInput || VM.SelectedStock != null || !VM.CanReorder)
         {
             e.Effects = DragDropEffects.None;
             e.Handled = true;
@@ -183,7 +275,7 @@ public partial class MainWindow : Window
 
     private void StockList_Drop(object sender, DragEventArgs e)
     {
-        if (_suppressListInput || VM.SelectedStock != null) return;
+        if (_suppressListInput || VM.SelectedStock != null || !VM.CanReorder) return;
         if (!e.Data.GetDataPresent(typeof(StockItem))) return;
         var dragged = e.Data.GetData(typeof(StockItem)) as StockItem;
         if (dragged == null) return;
@@ -191,9 +283,9 @@ public partial class MainWindow : Window
         var target = FindStockItemAtMouse(e);
         if (target == null || target == dragged) return;
 
-        int oldIndex = VM.Stocks.IndexOf(dragged);
-        int newIndex = VM.Stocks.IndexOf(target);
-        VM.MoveStock(oldIndex, newIndex);
+        int oldIndex = VM.VisibleStocks.IndexOf(dragged);
+        int newIndex = VM.VisibleStocks.IndexOf(target);
+        VM.MoveVisibleStock(oldIndex, newIndex);
     }
 
     private void StockList_GiveFeedback(object sender, GiveFeedbackEventArgs e)
@@ -415,28 +507,21 @@ public partial class MainWindow : Window
     {
         var item = GetStockItemFromSender(sender);
         if (item == null) return;
-
-        int index = VM.Stocks.IndexOf(item);
-        if (index >= 0)
-            VM.RemoveStock(index);
+        VM.RemoveStock(item);
     }
 
     private void ContextMenu_MoveUp(object sender, RoutedEventArgs e)
     {
         var item = GetStockItemFromSender(sender);
         if (item == null) return;
-
-        int index = VM.Stocks.IndexOf(item);
-        VM.MoveStockUp(index);
+        VM.MoveStockUp(item);
     }
 
     private void ContextMenu_MoveDown(object sender, RoutedEventArgs e)
     {
         var item = GetStockItemFromSender(sender);
         if (item == null) return;
-
-        int index = VM.Stocks.IndexOf(item);
-        VM.MoveStockDown(index);
+        VM.MoveStockDown(item);
     }
 
     private void ContextMenu_Rename(object sender, RoutedEventArgs e)
@@ -444,14 +529,9 @@ public partial class MainWindow : Window
         var stock = GetStockItemFromSender(sender);
         if (stock == null) return;
 
-        int index = VM.Stocks.IndexOf(stock);
-        if (index < 0) return;
-
         var newName = ShowRenameDialog(stock.DisplayName, this);
         if (newName != null)
-        {
-            VM.RenameStock(index, newName);
-        }
+            VM.RenameStock(stock, newName);
     }
 
     private static string? ShowRenameDialog(string currentName, Window owner)

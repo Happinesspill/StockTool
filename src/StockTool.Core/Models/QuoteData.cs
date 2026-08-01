@@ -1,5 +1,6 @@
 ﻿using System.Globalization;
 using System.Text.Json;
+using System.Text.Json.Serialization;
 
 namespace StockTool.Core.Models;
 
@@ -11,22 +12,34 @@ public class QuoteBatchResponse
 public class QuoteDataWrapper
 {
     public int Total { get; set; }
+
+    [JsonConverter(typeof(SingleOrArrayConverter<QuoteItem>))]
     public List<QuoteItem>? Diff { get; set; }
 }
 
 public class QuoteItem
 {
+    [JsonConverter(typeof(FlexibleDecimalConverter))]
     public decimal F2 { get; set; }  // current price
+    [JsonConverter(typeof(FlexibleDecimalConverter))]
     public decimal F3 { get; set; }  // change percent
+    [JsonConverter(typeof(FlexibleDecimalConverter))]
     public decimal F4 { get; set; }  // change amount
+    [JsonConverter(typeof(FlexibleDecimalConverter))]
     public decimal F5 { get; set; }  // volume (shares)
+    [JsonConverter(typeof(FlexibleDecimalConverter))]
     public decimal F6 { get; set; }  // turnover (amount)
     public string? F12 { get; set; } // code
+    [JsonConverter(typeof(FlexibleIntConverter))]
     public int F13 { get; set; }     // market
     public string? F14 { get; set; } // name
+    [JsonConverter(typeof(FlexibleDecimalConverter))]
     public decimal F15 { get; set; } // high
+    [JsonConverter(typeof(FlexibleDecimalConverter))]
     public decimal F16 { get; set; } // low
+    [JsonConverter(typeof(FlexibleDecimalConverter))]
     public decimal F17 { get; set; } // yesterday close
+    [JsonConverter(typeof(FlexibleDecimalConverter))]
     public decimal F18 { get; set; } // open
 }
 

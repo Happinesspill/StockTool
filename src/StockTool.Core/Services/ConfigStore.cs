@@ -1,4 +1,4 @@
-using System.Text.Json;
+﻿using System.Text.Json;
 using StockTool.Core.Models;
 
 namespace StockTool.Core.Services;
@@ -24,7 +24,10 @@ public class ConfigStore
             if (File.Exists(ConfigPath))
             {
                 var json = File.ReadAllText(ConfigPath);
-                return JsonSerializer.Deserialize<AppConfig>(json, JsonOptions) ?? new AppConfig();
+                var config = JsonSerializer.Deserialize<AppConfig>(json, JsonOptions) ?? new AppConfig();
+                config.EnsureGroupsMigrated();
+                config.EnsureHomeIndicesMigrated();
+                return config;
             }
         }
         catch
@@ -32,7 +35,10 @@ public class ConfigStore
             // corrupted config, fall through to defaults
         }
 
-        return new AppConfig();
+        var fresh = new AppConfig();
+        fresh.EnsureGroupsMigrated();
+        fresh.EnsureHomeIndicesMigrated();
+        return fresh;
     }
 
     public void Save(AppConfig config)
