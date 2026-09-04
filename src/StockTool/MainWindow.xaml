@@ -89,9 +89,11 @@
 
         <!-- Context Menu Styles -->
         <Style x:Key="ContextMenuStyle" TargetType="ContextMenu">
-            <Setter Property="Background" Value="#F5FFFFFF" />
-            <Setter Property="BorderBrush" Value="#D0CCCCCC" />
+            <Setter Property="Background" Value="#FDFFFFFF" />
+            <Setter Property="BorderBrush" Value="#E7ECF2" />
             <Setter Property="BorderThickness" Value="1" />
+            <Setter Property="FontFamily" Value="Microsoft YaHei UI" />
+            <Setter Property="Foreground" Value="#4F5D72" />
             <Setter Property="Padding" Value="0" />
             <Setter Property="HasDropShadow" Value="False" />
             <Setter Property="SnapsToDevicePixels" Value="True" />
@@ -102,18 +104,31 @@
                                 BorderBrush="{TemplateBinding BorderBrush}"
                                 BorderThickness="{TemplateBinding BorderThickness}"
                                 CornerRadius="8"
-                                Padding="4">
+                                Padding="6">
+                            <Border.Effect>
+                                <DropShadowEffect BlurRadius="18"
+                                                  ShadowDepth="0"
+                                                  Opacity="0.13"
+                                                  Color="#26354A" />
+                            </Border.Effect>
                             <StackPanel>
                                 <!-- Header -->
-                                <Border Padding="12,8" Name="HeaderBorder">
-                                    <TextBlock x:Name="HeaderText"
-                                               Foreground="#666666"
-                                               FontSize="12" />
+                                <Border Padding="12,9,12,8" Name="HeaderBorder">
+                                    <StackPanel>
+                                        <TextBlock x:Name="HeaderNameText"
+                                                   Foreground="#27364A"
+                                                   FontSize="13"
+                                                   FontWeight="SemiBold" />
+                                        <TextBlock x:Name="HeaderMetaText"
+                                                   Foreground="#8FA0B6"
+                                                   FontSize="10.5"
+                                                   Margin="0,3,0,0" />
+                                    </StackPanel>
                                 </Border>
                                 <Border Height="1"
-                                        Background="#D0DDDDDD"
+                                        Background="#F0F3F7"
                                         Margin="8,0" />
-                                <ItemsPresenter Margin="0,4,0,0" />
+                                <ItemsPresenter Margin="0,5,0,1" />
                             </StackPanel>
                         </Border>
                     </ControlTemplate>
@@ -123,35 +138,62 @@
 
         <Style x:Key="ContextMenuItemStyle" TargetType="MenuItem">
             <Setter Property="Background" Value="Transparent" />
-            <Setter Property="Foreground" Value="#1A1A1A" />
-            <Setter Property="FontSize" Value="13" />
-            <Setter Property="Height" Value="36" />
-            <Setter Property="Padding" Value="12,0" />
+            <Setter Property="Foreground" Value="#4F5D72" />
+            <Setter Property="FontFamily" Value="Microsoft YaHei UI" />
+            <Setter Property="FontSize" Value="12.5" />
+            <Setter Property="FontWeight" Value="Normal" />
+            <Setter Property="Height" Value="35" />
+            <Setter Property="Padding" Value="7,0,16,0" />
+            <Setter Property="MinWidth" Value="168" />
+        </Style>
+
+        <Style x:Key="ContextMenuDeleteItemStyle" TargetType="MenuItem"
+               BasedOn="{StaticResource ContextMenuItemStyle}">
+            <Setter Property="Foreground" Value="#FF4262" />
+        </Style>
+
+        <Style x:Key="ListHeaderButtonStyle" TargetType="Button">
+            <Setter Property="Background" Value="Transparent" />
+            <Setter Property="BorderThickness" Value="0" />
+            <Setter Property="Padding" Value="0" />
+            <Setter Property="Cursor" Value="Hand" />
+            <Setter Property="Foreground" Value="#9AA6B8" />
+            <Setter Property="FontSize" Value="11" />
+            <Setter Property="FontFamily" Value="Microsoft YaHei UI" />
             <Setter Property="Template">
                 <Setter.Value>
-                    <ControlTemplate TargetType="MenuItem">
-                        <Border x:Name="Border"
-                                Background="{TemplateBinding Background}"
-                                CornerRadius="4"
-                                Margin="2,1">
-                            <ContentPresenter ContentSource="Header"
-                                              Margin="{TemplateBinding Padding}"
-                                              VerticalAlignment="Center"
-                                              HorizontalAlignment="Left" />
-                        </Border>
-                        <ControlTemplate.Triggers>
-                            <Trigger Property="IsHighlighted" Value="True">
-                                <Setter TargetName="Border" Property="Background" Value="#EFEFEF" />
-                            </Trigger>
-                        </ControlTemplate.Triggers>
+                    <ControlTemplate TargetType="Button">
+                        <ContentPresenter HorizontalAlignment="{TemplateBinding HorizontalContentAlignment}"
+                                          VerticalAlignment="Center" />
                     </ControlTemplate>
                 </Setter.Value>
             </Setter>
         </Style>
 
-        <Style x:Key="ContextMenuDeleteItemStyle" TargetType="MenuItem"
-               BasedOn="{StaticResource ContextMenuItemStyle}">
-            <Setter Property="Foreground" Value="#FF453A" />
+        <Style x:Key="EditPillButtonStyle" TargetType="Button">
+            <Setter Property="Height" Value="24" />
+            <Setter Property="MinWidth" Value="58" />
+            <Setter Property="Padding" Value="10,0" />
+            <Setter Property="Background" Value="#F3F6FA" />
+            <Setter Property="Foreground" Value="#65758B" />
+            <Setter Property="BorderBrush" Value="#E3E8F0" />
+            <Setter Property="BorderThickness" Value="1" />
+            <Setter Property="FontSize" Value="11" />
+            <Setter Property="Cursor" Value="Hand" />
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <Border Background="{TemplateBinding Background}"
+                                BorderBrush="{TemplateBinding BorderBrush}"
+                                BorderThickness="{TemplateBinding BorderThickness}"
+                                CornerRadius="12"
+                                Padding="{TemplateBinding Padding}">
+                            <ContentPresenter HorizontalAlignment="Center"
+                                              VerticalAlignment="Center" />
+                        </Border>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
         </Style>
     </Window.Resources>
 
@@ -211,6 +253,7 @@
             <!-- Content: Indices + Groups + List -->
             <Grid Grid.Row="1">
                 <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto" />
                     <RowDefinition Height="Auto" />
                     <RowDefinition Height="Auto" />
                     <RowDefinition Height="Auto" />
@@ -345,56 +388,112 @@
                                 FontSize="13"
                                 ToolTip="管理分组"
                                 Click="BtnManageGroups_Click" />
+                        <Button Content="{Binding EditModeText}"
+                                Style="{StaticResource EditPillButtonStyle}"
+                                ToolTip="编辑列表"
+                                Click="BtnEditMode_Click" />
                     </StackPanel>
                 </Grid>
 
+                <!-- Holding summary -->
+                <Border Grid.Row="2" Margin="10,6,12,3" Background="#F6F8FB" BorderBrush="#E9EDF3" BorderThickness="1" CornerRadius="7" Padding="8,6">
+                    <Grid>
+                        <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="*" /><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                        <StackPanel><TextBlock Text="持仓市值" Foreground="#9AA6B8" FontSize="10"/><TextBlock Text="{Binding HoldingMarketValueText}" Foreground="#4F5D72" FontSize="13" FontWeight="SemiBold" Margin="0,2,0,0"/></StackPanel>
+                        <StackPanel Grid.Column="1"><TextBlock Text="总浮盈" Foreground="#9AA6B8" FontSize="10"/><TextBlock Text="{Binding HoldingProfitTotalText}" Foreground="#D93025" FontSize="13" FontWeight="SemiBold" Margin="0,2,0,0"/></StackPanel>
+                        <StackPanel Grid.Column="2"><TextBlock Text="今日盈亏" Foreground="#9AA6B8" FontSize="10"/><TextBlock Text="{Binding HoldingTodayProfitText}" Foreground="#D93025" FontSize="13" FontWeight="SemiBold" Margin="0,2,0,0"/></StackPanel>
+                        <Button Grid.Column="3" Content="◉" Style="{StaticResource TitleBarButtonStyle}" ToolTip="预警设置" Click="BtnAlertSettings_Click" />
+                    </Grid>
+                </Border>
+
                 <!-- Column header -->
-                <Grid Grid.Row="2" Margin="10,8,12,4">
-                    <Grid.ColumnDefinitions>
-                        <ColumnDefinition Width="120" />
-                        <ColumnDefinition Width="*" />
-                        <ColumnDefinition Width="80" />
-                    </Grid.ColumnDefinitions>
-                    <TextBlock Text="名称"
-                               Foreground="#999999"
-                               FontSize="11"
-                               VerticalAlignment="Center" />
-                    <TextBlock Grid.Column="1"
-                               Text="趋势"
-                               Foreground="#999999"
-                               FontSize="11"
-                               HorizontalAlignment="Center"
-                               VerticalAlignment="Center" />
-                    <Button Grid.Column="2"
-                            HorizontalAlignment="Right"
-                            Cursor="Hand"
-                            Click="BtnSortPrice_Click"
-                            Background="Transparent"
-                            BorderThickness="0"
-                            Padding="0"
-                            ToolTip="切换涨幅排序 / 默认排序">
-                        <Button.Template>
-                            <ControlTemplate TargetType="Button">
-                                <StackPanel Orientation="Horizontal">
-                                    <TextBlock Text="现价/涨幅"
-                                               Foreground="#999999"
-                                               FontSize="11" />
-                                    <TextBlock Text="{Binding SortArrowText}"
-                                               Foreground="#999999"
-                                               FontSize="10"
-                                               Margin="2,0,0,0"
-                                               VerticalAlignment="Center" />
-                                </StackPanel>
-                            </ControlTemplate>
-                        </Button.Template>
-                    </Button>
-                </Grid>
+                <ScrollViewer x:Name="HeaderScroll"
+                              Grid.Row="3"
+                              Height="22"
+                              HorizontalScrollBarVisibility="Hidden"
+                              VerticalScrollBarVisibility="Disabled"
+                              Margin="0,4,0,2">
+                    <Grid MinWidth="320" Height="22">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="110" />
+                            <ColumnDefinition Width="82" />
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="75" />
+                            <ColumnDefinition Width="0" />
+                            <ColumnDefinition Width="0" />
+                            <ColumnDefinition Width="0" />
+                            <ColumnDefinition Width="0" />
+                            <ColumnDefinition Width="0" />
+                            <ColumnDefinition Width="0" />
+                        </Grid.ColumnDefinitions>
+                        <TextBlock Text="名称"
+                                   Foreground="#9AA6B8"
+                                   FontSize="11"
+                                   HorizontalAlignment="Center"
+                                   VerticalAlignment="Center" />
+                        <Button Grid.Column="1"
+                                Tag="change"
+                                Style="{StaticResource ListHeaderButtonStyle}"
+                                HorizontalContentAlignment="Right"
+                                Click="BtnSortColumn_Click">
+                            <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
+                                <TextBlock Text="现价/涨幅" />
+                                <TextBlock Text="{Binding ChangeSortArrow}" Margin="2,0,0,0" />
+                            </StackPanel>
+                        </Button>
+                        <TextBlock Grid.Column="2" Text="趋势" Foreground="#9AA6B8" FontSize="11" HorizontalAlignment="Center" VerticalAlignment="Center" />
+                        <Button Grid.Column="3" Tag="profit" Style="{StaticResource ListHeaderButtonStyle}" HorizontalContentAlignment="Right" Click="BtnSortColumn_Click">
+                            <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
+                                <TextBlock Text="持仓盈亏" />
+                                <TextBlock Text="{Binding ProfitSortArrow}" Margin="2,0,0,0" />
+                            </StackPanel>
+                        </Button>
+                        <TextBlock Visibility="Collapsed" Grid.Column="3" Text="趋势" Foreground="#9AA6B8" FontSize="11" HorizontalAlignment="Center" VerticalAlignment="Center" />
+                        <Button Visibility="Collapsed" Grid.Column="4" Tag="turnover" Style="{StaticResource ListHeaderButtonStyle}" HorizontalContentAlignment="Right" Click="BtnSortColumn_Click">
+                            <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
+                                <TextBlock Text="成交额" />
+                                <TextBlock Text="{Binding TurnoverSortArrow}" Margin="2,0,0,0" />
+                            </StackPanel>
+                        </Button>
+                        <Button Visibility="Collapsed" Grid.Column="5" Tag="turnoverRate" Style="{StaticResource ListHeaderButtonStyle}" HorizontalContentAlignment="Right" Click="BtnSortColumn_Click">
+                            <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
+                                <TextBlock Text="换手率" />
+                                <TextBlock Text="{Binding TurnoverRateSortArrow}" Margin="2,0,0,0" />
+                            </StackPanel>
+                        </Button>
+                        <Button Visibility="Collapsed" Grid.Column="6" Tag="speed" Style="{StaticResource ListHeaderButtonStyle}" HorizontalContentAlignment="Right" Click="BtnSortColumn_Click">
+                            <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
+                                <TextBlock Text="涨速" />
+                                <TextBlock Text="{Binding SpeedSortArrow}" Margin="2,0,0,0" />
+                            </StackPanel>
+                        </Button>
+                        <Button Visibility="Collapsed" Grid.Column="7" Tag="volumeRatio" Style="{StaticResource ListHeaderButtonStyle}" HorizontalContentAlignment="Right" Click="BtnSortColumn_Click">
+                            <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
+                                <TextBlock Text="量比" />
+                                <TextBlock Text="{Binding VolumeRatioSortArrow}" Margin="2,0,0,0" />
+                            </StackPanel>
+                        </Button>
+                        <Button Visibility="Collapsed" Grid.Column="8" Tag="marketValue" Style="{StaticResource ListHeaderButtonStyle}" HorizontalContentAlignment="Right" Click="BtnSortColumn_Click">
+                            <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
+                                <TextBlock Text="流通/总市值" />
+                                <TextBlock Text="{Binding MarketValueSortArrow}" Margin="2,0,0,0" />
+                            </StackPanel>
+                        </Button>
+                        <!--<Border Grid.Column="0" Width="1" HorizontalAlignment="Right" Background="#E8EDF3" IsHitTestVisible="False" />
+                        <Border Grid.Column="1" Width="1" HorizontalAlignment="Right" Background="#E8EDF3" IsHitTestVisible="False" />
+                        <Border Grid.Column="2" Width="1" HorizontalAlignment="Right" Background="#E8EDF3" IsHitTestVisible="False" />-->
+                    </Grid>
+                </ScrollViewer>
 
                 <!-- Stock list -->
-                <Grid Grid.Row="3">
-                    <ScrollViewer VerticalScrollBarVisibility="Auto">
+                <Grid Grid.Row="4">
+                    <ScrollViewer x:Name="ListScroll"
+                                  VerticalScrollBarVisibility="Auto"
+                                  HorizontalScrollBarVisibility="Auto"
+                                  ScrollChanged="ListScroll_ScrollChanged">
                         <ItemsControl x:Name="StockList"
                                       ItemsSource="{Binding VisibleStocks}"
+                                      MinWidth="320"
                                       AllowDrop="True"
                                       PreviewMouseLeftButtonDown="StockList_PreviewMouseLeftButtonDown"
                                       PreviewMouseMove="StockList_PreviewMouseMove"
@@ -405,33 +504,154 @@
                             <DataTemplate>
                                 <Border Height="52"
                                         BorderBrush="#10000000"
-                                        BorderThickness="0,0,0,1"
+                                        BorderThickness="0"
                                         Background="Transparent"
                                         Tag="{Binding}"
                                         MouseLeftButtonUp="StockItem_Click">
                                     <Border.ContextMenu>
                                         <ContextMenu Style="{StaticResource ContextMenuStyle}"
                                                      Opened="ContextMenu_Opened">
-                                            <MenuItem Header="↑  上移"
+                                            <MenuItem Header="置顶"
                                                       Style="{StaticResource ContextMenuItemStyle}"
-                                                      Click="ContextMenu_MoveUp" />
-                                            <MenuItem Header="↓  下移"
+                                                      Click="ContextMenu_MoveTop">
+                                                <MenuItem.Icon>
+                                                    <Viewbox Width="18" Height="18">
+                                                        <Canvas Width="16" Height="16">
+                                                            <Path Data="M8,13.5 L8,4.5 M4.8,7.7 L8,4.5 L11.2,7.7 M4,14.5 L12,14.5"
+                                                                  Stroke="#65758B"
+                                                                  StrokeThickness="1.5"
+                                                                  StrokeStartLineCap="Round"
+                                                                  StrokeEndLineCap="Round"
+                                                                  StrokeLineJoin="Round" />
+                                                        </Canvas>
+                                                    </Viewbox>
+                                                </MenuItem.Icon>
+                                            </MenuItem>
+                                            <MenuItem Header="置底"
                                                       Style="{StaticResource ContextMenuItemStyle}"
-                                                      Click="ContextMenu_MoveDown" />
-                                            <MenuItem Header="✎  重命名"
+                                                      Click="ContextMenu_MoveBottom">
+                                                <MenuItem.Icon>
+                                                    <Viewbox Width="18" Height="18">
+                                                        <Canvas Width="16" Height="16">
+                                                            <Path Data="M8,2.5 L8,11.5 M4.8,8.3 L8,11.5 L11.2,8.3 M4,1.5 L12,1.5"
+                                                                  Stroke="#65758B"
+                                                                  StrokeThickness="1.5"
+                                                                  StrokeStartLineCap="Round"
+                                                                  StrokeEndLineCap="Round"
+                                                                  StrokeLineJoin="Round" />
+                                                        </Canvas>
+                                                    </Viewbox>
+                                                </MenuItem.Icon>
+                                            </MenuItem>
+                                            <MenuItem Header="设置持仓"
                                                       Style="{StaticResource ContextMenuItemStyle}"
-                                                      Click="ContextMenu_Rename" />
-                                            <MenuItem Header="✕  删除"
+                                                      Click="ContextMenu_SetHolding">
+                                                <MenuItem.Icon>
+                                                    <Viewbox Width="18" Height="18">
+                                                        <Canvas Width="16" Height="16">
+                                                            <Path Data="M3,5.5 L13,5.5 A1.5,1.5 0 0 1 14.5,7 L14.5,12 A1.5,1.5 0 0 1 13,13.5 L3,13.5 A1.5,1.5 0 0 1 1.5,12 L1.5,4 A1.5,1.5 0 0 1 3,2.5 L10.5,2.5 A1.5,1.5 0 0 1 12,4 L12,5.5"
+                                                                  Stroke="#65758B"
+                                                                  StrokeThickness="1.35"
+                                                                  Fill="Transparent"
+                                                                  StrokeStartLineCap="Round"
+                                                                  StrokeEndLineCap="Round"
+                                                                  StrokeLineJoin="Round" />
+                                                            <Path Data="M11.2,9.5 L14.5,9.5"
+                                                                  Stroke="#65758B"
+                                                                  StrokeThickness="1.35"
+                                                                  StrokeStartLineCap="Round"
+                                                                  StrokeEndLineCap="Round" />
+                                                            <Ellipse Canvas.Left="10.3"
+                                                                     Canvas.Top="8.65"
+                                                                     Width="1.7"
+                                                                     Height="1.7"
+                                                                     Fill="#65758B" />
+                                                        </Canvas>
+                                                    </Viewbox>
+                                                </MenuItem.Icon>
+                                            </MenuItem>
+                                            <MenuItem Header="删除股票"
                                                       Style="{StaticResource ContextMenuDeleteItemStyle}"
-                                                      Click="ContextMenu_Delete" />
+                                                      Click="ContextMenu_Delete">
+                                                <MenuItem.Icon>
+                                                    <Viewbox Width="18" Height="18">
+                                                        <Canvas Width="16" Height="16">
+                                                            <Path Data="M3.5,4.5 L12.5,4.5 M6.5,2.5 L9.5,2.5 M5,4.5 L5.7,13.3 A1.2,1.2 0 0 0 6.9,14.5 L9.1,14.5 A1.2,1.2 0 0 0 10.3,13.3 L11,4.5 M6.8,7 L6.8,12 M9.2,7 L9.2,12"
+                                                                  Stroke="#FF4262"
+                                                                  StrokeThickness="1.35"
+                                                                  Fill="Transparent"
+                                                                  StrokeStartLineCap="Round"
+                                                                  StrokeEndLineCap="Round"
+                                                                  StrokeLineJoin="Round" />
+                                                        </Canvas>
+                                                    </Viewbox>
+                                                </MenuItem.Icon>
+                                            </MenuItem>
+                                            <MenuItem Header="设置预警"
+                                                      Style="{StaticResource ContextMenuItemStyle}"
+                                                      Click="ContextMenu_SetAlert">
+                                                <MenuItem.Icon><TextBlock Text="◉" Foreground="#65758B" FontSize="16" /></MenuItem.Icon>
+                                            </MenuItem>
+                                            <Separator Margin="8,4" />
+                                            <MenuItem Header="从当前分组移出"
+                                                      Style="{StaticResource ContextMenuItemStyle}"
+                                                      Click="ContextMenu_RemoveFromGroup">
+                                                <MenuItem.Icon>
+                                                    <Viewbox Width="18" Height="18">
+                                                        <Canvas Width="16" Height="16">
+                                                            <Path Data="M2,5 A1.5,1.5 0 0 1 3.5,3.5 L6.3,3.5 L7.8,5 L12.5,5 A1.5,1.5 0 0 1 14,6.5 L14,12.5 A1.5,1.5 0 0 1 12.5,14 L3.5,14 A1.5,1.5 0 0 1 2,12.5 Z"
+                                                                  Stroke="#65758B"
+                                                                  StrokeThickness="1.35"
+                                                                  Fill="Transparent"
+                                                                  StrokeStartLineCap="Round"
+                                                                  StrokeEndLineCap="Round"
+                                                                  StrokeLineJoin="Round" />
+                                                            <Path Data="M6.5,9.5 L11.5,9.5"
+                                                                  Stroke="#65758B"
+                                                                  StrokeThickness="1.35"
+                                                                  StrokeStartLineCap="Round"
+                                                                  StrokeEndLineCap="Round" />
+                                                        </Canvas>
+                                                    </Viewbox>
+                                                </MenuItem.Icon>
+                                            </MenuItem>
+                                            <MenuItem x:Name="GroupSubMenu"
+                                                      Header="加入其他分组"
+                                                      Style="{StaticResource ContextMenuItemStyle}">
+                                                <MenuItem.Icon>
+                                                    <Viewbox Width="18" Height="18">
+                                                        <Canvas Width="16" Height="16">
+                                                            <Path Data="M2,5 A1.5,1.5 0 0 1 3.5,3.5 L6.3,3.5 L7.8,5 L12.5,5 A1.5,1.5 0 0 1 14,6.5 L14,12.5 A1.5,1.5 0 0 1 12.5,14 L3.5,14 A1.5,1.5 0 0 1 2,12.5 Z"
+                                                                  Stroke="#65758B"
+                                                                  StrokeThickness="1.35"
+                                                                  Fill="Transparent"
+                                                                  StrokeStartLineCap="Round"
+                                                                  StrokeEndLineCap="Round"
+                                                                  StrokeLineJoin="Round" />
+                                                            <Path Data="M8,9.5 L12,9.5 M10,7.5 L10,11.5"
+                                                                  Stroke="#65758B"
+                                                                  StrokeThickness="1.35"
+                                                                  StrokeStartLineCap="Round"
+                                                                  StrokeEndLineCap="Round" />
+                                                        </Canvas>
+                                                    </Viewbox>
+                                                </MenuItem.Icon>
+                                            </MenuItem>
                                         </ContextMenu>
                                     </Border.ContextMenu>
 
                                     <Grid>
                                         <Grid.ColumnDefinitions>
-                                            <ColumnDefinition Width="120" />
+                                            <ColumnDefinition Width="110" />
+                                            <ColumnDefinition Width="82" />
                                             <ColumnDefinition Width="*" />
-                                            <ColumnDefinition Width="80" />
+                                            <ColumnDefinition Width="75" />
+                                            <ColumnDefinition Width="0" />
+                                            <ColumnDefinition Width="0" />
+                                            <ColumnDefinition Width="0" />
+                                            <ColumnDefinition Width="0" />
+                                            <ColumnDefinition Width="0" />
+                                            <ColumnDefinition Width="0" />
                                         </Grid.ColumnDefinitions>
 
                                         <StackPanel Grid.Column="0"
@@ -458,22 +678,16 @@
                                             </StackPanel>
                                         </StackPanel>
 
-                                        <controls:SparklineControl Grid.Column="1"
-                                                                    Points="{Binding IntradayPoints}"
-                                                                    BaseLine="{Binding YesterdayClose}"
-                                                                    IsUp="{Binding IsUp}"
-                                                                    Margin="4,4" />
-
-                                        <StackPanel Grid.Column="2"
+                                        <StackPanel Grid.Column="1"
                                                     VerticalAlignment="Center"
                                                     HorizontalAlignment="Right"
-                                                    Margin="0,0,12,0">
+                                                    Margin="0,0,10,0">
                                             <TextBlock Text="{Binding CurrentPrice, StringFormat={}{0:F2}}"
-                                                       FontSize="{Binding DataContext.FontSize, RelativeSource={RelativeSource AncestorType=Window}, Converter={StaticResource FontSizeConverter}, ConverterParameter=1}"
+                                                       FontSize="12"
                                                        FontWeight="SemiBold"
                                                        HorizontalAlignment="Right"
                                                        Foreground="#1A1A1A" />
-                                            <TextBlock FontSize="{Binding DataContext.FontSize, RelativeSource={RelativeSource AncestorType=Window}, Converter={StaticResource FontSizeConverter}, ConverterParameter=-1}"
+                                            <TextBlock FontSize="11"
                                                        FontWeight="SemiBold"
                                                        HorizontalAlignment="Right"
                                                        Margin="0,2,0,0">
@@ -495,6 +709,94 @@
                                                 <Run Text="%" />
                                             </TextBlock>
                                         </StackPanel>
+
+                                        <StackPanel Grid.Column="3"
+                                                    VerticalAlignment="Center"
+                                                    HorizontalAlignment="Right"
+                                                    Margin="0,0,10,0">
+                                            <TextBlock Text="{Binding HoldingProfit, StringFormat={}{0:+0.##;-0.##;0}}"
+                                                       FontSize="12"
+                                                       FontWeight="SemiBold"
+                                                       HorizontalAlignment="Right">
+                                                <TextBlock.Style>
+                                                    <Style TargetType="TextBlock">
+                                                        <Setter Property="Foreground" Value="#AAB4C3" />
+                                                        <Style.Triggers>
+                                                            <DataTrigger Binding="{Binding HasHolding}" Value="True">
+                                                                <Setter Property="Foreground" Value="#D93025" />
+                                                            </DataTrigger>
+                                                            <DataTrigger Binding="{Binding HoldingProfit, Converter={StaticResource NegativeConverter}}" Value="True">
+                                                                <Setter Property="Foreground" Value="#1A8C3F" />
+                                                            </DataTrigger>
+                                                        </Style.Triggers>
+                                                    </Style>
+                                                </TextBlock.Style>
+                                            </TextBlock>
+                                            <TextBlock Text="{Binding HoldingProfitPercent, StringFormat={}{0:+0.00;-0.00;0.00}%}"
+                                                       Foreground="#8FA0B6"
+                                                       FontSize="11"
+                                                       HorizontalAlignment="Right"
+                                                       Margin="0,2,0,0" />
+                                        </StackPanel>
+
+                                        <controls:SparklineControl Grid.Column="2"
+                                                                    Points="{Binding IntradayPoints}"
+                                                                    BaseLine="{Binding YesterdayClose}"
+                                                                    IsUp="{Binding IsUp}"
+                                                                    Margin="4,4" />
+
+                                        <!--<Border Grid.Column="0" Width="1" HorizontalAlignment="Right" Background="#E8EDF3" IsHitTestVisible="False" />
+                                        <Border Grid.Column="1" Width="1" HorizontalAlignment="Right" Background="#E8EDF3" IsHitTestVisible="False" />
+                                        <Border Grid.Column="2" Width="1" HorizontalAlignment="Right" Background="#E8EDF3" IsHitTestVisible="False" />-->
+
+                                        <TextBlock Grid.Column="4" Text="{Binding TurnoverText}" Foreground="#65758B" FontSize="11" HorizontalAlignment="Right" VerticalAlignment="Center" Margin="0,0,10,0" />
+                                        <TextBlock Grid.Column="5" Text="{Binding TurnoverRateText}" Foreground="#65758B" FontSize="11" HorizontalAlignment="Right" VerticalAlignment="Center" Margin="0,0,10,0" />
+                                        <TextBlock Grid.Column="6" Text="{Binding SpeedText}" FontSize="11" HorizontalAlignment="Right" VerticalAlignment="Center" Margin="0,0,10,0">
+                                            <TextBlock.Style>
+                                                <Style TargetType="TextBlock">
+                                                    <Setter Property="Foreground" Value="#AAB4C3" />
+                                                    <Style.Triggers>
+                                                        <DataTrigger Binding="{Binding Path=Speed, Converter={StaticResource NegativeConverter}}" Value="True">
+                                                            <Setter Property="Foreground" Value="#1A8C3F" />
+                                                        </DataTrigger>
+                                                        <DataTrigger Binding="{Binding Speed}" Value="0">
+                                                            <Setter Property="Foreground" Value="#AAB4C3" />
+                                                        </DataTrigger>
+                                                        <DataTrigger Binding="{Binding IsSpeedUp}" Value="True">
+                                                            <Setter Property="Foreground" Value="#D93025" />
+                                                        </DataTrigger>
+                                                    </Style.Triggers>
+                                                </Style>
+                                            </TextBlock.Style>
+                                        </TextBlock>
+                                        <TextBlock Grid.Column="7" Text="{Binding VolumeRatioText}" Foreground="#65758B" FontSize="11" HorizontalAlignment="Right" VerticalAlignment="Center" Margin="0,0,10,0" />
+                                        <StackPanel Grid.Column="8" VerticalAlignment="Center" HorizontalAlignment="Right" Margin="0,0,10,0">
+                                            <TextBlock Text="{Binding FloatMarketValueText}" Foreground="#65758B" FontSize="11" HorizontalAlignment="Right" />
+                                            <TextBlock Text="{Binding TotalMarketValueText}" Foreground="#9AA6B8" FontSize="10" HorizontalAlignment="Right" Margin="0,2,0,0" />
+                                        </StackPanel>
+                                        <Button Grid.Column="9"
+                                                Width="24"
+                                                Height="24"
+                                                HorizontalAlignment="Center"
+                                                VerticalAlignment="Center"
+                                                Background="#FFF1F4"
+                                                Foreground="#FF4262"
+                                                BorderThickness="0"
+                                                Content="×"
+                                                FontSize="16"
+                                                Tag="{Binding}"
+                                                Click="BtnRowDelete_Click">
+                                            <Button.Style>
+                                                <Style TargetType="Button" BasedOn="{StaticResource TitleBarCloseButtonStyle}">
+                                                    <Setter Property="Visibility" Value="Collapsed" />
+                                                    <Style.Triggers>
+                                                        <DataTrigger Binding="{Binding DataContext.IsEditMode, RelativeSource={RelativeSource AncestorType=Window}}" Value="True">
+                                                            <Setter Property="Visibility" Value="Visible" />
+                                                        </DataTrigger>
+                                                    </Style.Triggers>
+                                                </Style>
+                                            </Button.Style>
+                                        </Button>
                                     </Grid>
                                 </Border>
                             </DataTemplate>

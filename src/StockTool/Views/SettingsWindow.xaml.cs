@@ -1,6 +1,7 @@
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
+using StockTool.ViewModels;
 
 namespace StockTool.Views;
 
@@ -8,6 +9,7 @@ public partial class SettingsWindow : Window
 {
     private bool _isRecording;
     private bool _loaded;
+    private readonly MainViewModel? _vm;
 
     public double OpacityValue { get; private set; }
     public int FontSizeValue { get; private set; }
@@ -16,9 +18,11 @@ public partial class SettingsWindow : Window
     public bool IsTopmost { get; private set; }
     public bool ShowMarketTag { get; private set; }
 
-    public SettingsWindow(double opacity, int fontSize, int refreshInterval, string hotkey, bool topmost, bool showMarketTag)
+    public SettingsWindow(double opacity, int fontSize, int refreshInterval, string hotkey, bool topmost, bool showMarketTag, MainViewModel? viewModel = null)
     {
+        _vm = viewModel;
         InitializeComponent();
+        DataContext = viewModel;
 
         // opacity
         OpacityValue = opacity;
@@ -129,5 +133,19 @@ public partial class SettingsWindow : Window
         ShowMarketTag = ChkShowMarketTag.IsChecked ?? true;
         DialogResult = true;
         Close();
+    }
+
+    private void BtnMoveIndexUp_Click(object sender, RoutedEventArgs e)
+    {
+        if (_vm == null || sender is not FrameworkElement { Tag: string code }) return;
+        _vm.MoveHomeIndex(code, -1);
+        e.Handled = true;
+    }
+
+    private void BtnMoveIndexDown_Click(object sender, RoutedEventArgs e)
+    {
+        if (_vm == null || sender is not FrameworkElement { Tag: string code }) return;
+        _vm.MoveHomeIndex(code, 1);
+        e.Handled = true;
     }
 }

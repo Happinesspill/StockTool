@@ -18,6 +18,13 @@ public class StockItem : INotifyPropertyChanged
     private decimal _low;
     private decimal _volume;
     private decimal _turnover;
+    private decimal _turnoverRate;
+    private decimal _volumeRatio;
+    private decimal _speed;
+    private decimal _totalMarketValue;
+    private decimal _floatMarketValue;
+    private decimal _holdingShares;
+    private decimal _holdingCost;
     private List<decimal> _intradayPoints = [];
     private List<decimal> _intradayAvgPoints = [];
     private List<KlineItem> _klineData = [];
@@ -61,7 +68,15 @@ public class StockItem : INotifyPropertyChanged
     public decimal CurrentPrice
     {
         get => _currentPrice;
-        set { _currentPrice = value; OnPropertyChanged(); }
+        set
+        {
+            _currentPrice = value;
+            OnPropertyChanged();
+            OnPropertyChanged(nameof(HoldingProfit));
+            OnPropertyChanged(nameof(HoldingProfitPercent));
+            OnPropertyChanged(nameof(TodayHoldingProfit));
+            OnPropertyChanged(nameof(MarketValue));
+        }
     }
 
     public decimal ChangePercent
@@ -75,7 +90,7 @@ public class StockItem : INotifyPropertyChanged
     public decimal YesterdayClose
     {
         get => _yesterdayClose;
-        set { _yesterdayClose = value; OnPropertyChanged(); }
+        set { _yesterdayClose = value; OnPropertyChanged(); OnPropertyChanged(nameof(TodayHoldingProfit)); }
     }
 
     public decimal Open
@@ -108,6 +123,36 @@ public class StockItem : INotifyPropertyChanged
         set { _turnover = value; OnPropertyChanged(); OnPropertyChanged(nameof(TurnoverText)); }
     }
 
+    public decimal TurnoverRate
+    {
+        get => _turnoverRate;
+        set { _turnoverRate = value; OnPropertyChanged(); OnPropertyChanged(nameof(TurnoverRateText)); }
+    }
+
+    public decimal VolumeRatio
+    {
+        get => _volumeRatio;
+        set { _volumeRatio = value; OnPropertyChanged(); OnPropertyChanged(nameof(VolumeRatioText)); }
+    }
+
+    public decimal Speed
+    {
+        get => _speed;
+        set { _speed = value; OnPropertyChanged(); OnPropertyChanged(nameof(SpeedText)); OnPropertyChanged(nameof(IsSpeedUp)); }
+    }
+
+    public decimal TotalMarketValue
+    {
+        get => _totalMarketValue;
+        set { _totalMarketValue = value; OnPropertyChanged(); OnPropertyChanged(nameof(TotalMarketValueText)); }
+    }
+
+    public decimal FloatMarketValue
+    {
+        get => _floatMarketValue;
+        set { _floatMarketValue = value; OnPropertyChanged(); OnPropertyChanged(nameof(FloatMarketValueText)); }
+    }
+
     public string VolumeText
     {
         get
@@ -127,6 +172,60 @@ public class StockItem : INotifyPropertyChanged
             return $"{_turnover:F2}";
         }
     }
+
+    public string TurnoverRateText => _turnoverRate > 0 ? $"{_turnoverRate:F2}%" : "--";
+
+    public string VolumeRatioText => _volumeRatio > 0 ? $"{_volumeRatio:F2}" : "--";
+
+    public string SpeedText => _speed != 0 ? $"{_speed:+0.00;-0.00;0.00}%" : "--";
+
+    public bool IsSpeedUp => _speed > 0;
+
+    public string TotalMarketValueText => FormatMoney(_totalMarketValue);
+
+    public string FloatMarketValueText => FormatMoney(_floatMarketValue);
+
+    public decimal HoldingShares
+    {
+        get => _holdingShares;
+        set
+        {
+            _holdingShares = value;
+            OnPropertyChanged();
+            OnPropertyChanged(nameof(HasHolding));
+            OnPropertyChanged(nameof(HoldingProfit));
+            OnPropertyChanged(nameof(HoldingProfitPercent));
+            OnPropertyChanged(nameof(TodayHoldingProfit));
+            OnPropertyChanged(nameof(MarketValue));
+        }
+    }
+
+    public decimal HoldingCost
+    {
+        get => _holdingCost;
+        set
+        {
+            _holdingCost = value;
+            OnPropertyChanged();
+            OnPropertyChanged(nameof(HasHolding));
+            OnPropertyChanged(nameof(HoldingProfit));
+            OnPropertyChanged(nameof(HoldingProfitPercent));
+        }
+    }
+
+    public bool HasHolding => _holdingShares > 0 && _holdingCost > 0;
+
+    public decimal HoldingProfit => HasHolding ? (_currentPrice - _holdingCost) * _holdingShares : 0;
+
+    public decimal HoldingProfitPercent => HasHolding && _holdingCost > 0
+        ? (_currentPrice - _holdingCost) / _holdingCost * 100m
+        : 0;
+
+    public decimal TodayHoldingProfit => HasHolding && _yesterdayClose > 0
+        ? (_currentPrice - _yesterdayClose) * _holdingShares
+        : 0;
+
+    public decimal MarketValue => _currentPrice * _holdingShares;
 
     public List<decimal> IntradayPoints
     {
@@ -156,4 +255,12 @@ public class StockItem : INotifyPropertyChanged
 
     protected void OnPropertyChanged([CallerMemberName] string? name = null)
         => PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(name));
+
+    private static string FormatMoney(decimal value)
+    {
+        if (value <= 0) return "--";
+        if (value >= 1_0000_0000) return $"{value / 1_0000_0000:F2}亿";
+        if (value >= 1_0000) return $"{value / 1_0000:F2}万";
+        return $"{value:F2}";
+    }
 }

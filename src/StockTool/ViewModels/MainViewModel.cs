@@ -25,6 +25,14 @@ public class MainViewModel : INotifyPropertyChanged
     public ObservableCollection<IndexOptionItem> IndexOptions { get; } = [];
     /// <summary>管理窗：已选指数卡片（与 Indices 同源顺序）。</summary>
     public ObservableCollection<IndexItem> SelectedHomeIndices { get; } = [];
+    public event Action<string>? AlertTriggered;
+    public decimal HoldingMarketValue => Stocks.Where(s => s.HasHolding).Sum(s => s.MarketValue);
+    public decimal HoldingProfitTotal => Stocks.Where(s => s.HasHolding).Sum(s => s.HoldingProfit);
+    public decimal HoldingTodayProfit => Stocks.Where(s => s.HasHolding).Sum(s => s.TodayHoldingProfit);
+    public string HoldingMarketValueText => FormatMoney(HoldingMarketValue);
+    public string HoldingProfitTotalText => $"{HoldingProfitTotal:+0.##;-0.##;0.##}";
+    public string HoldingTodayProfitText => $"{HoldingTodayProfit:+0.##;-0.##;0.##}";
+    public int AlertCount => _config.AlertRules.Count(r => r.Enabled);
 
     public double WindowLeft
     {
@@ -86,6 +94,21 @@ public class MainViewModel : INotifyPropertyChanged
         set { _config.ShowMarketTag = value; OnPropertyChanged(); }
     }
 
+    public bool IsEditMode
+    {
+        get => _config.IsEditMode;
+        set
+        {
+            if (_config.IsEditMode == value) return;
+            _config.IsEditMode = value;
+            _configStore.Save(_config);
+            OnPropertyChanged();
+            OnPropertyChanged(nameof(EditModeText));
+        }
+    }
+
+    public string EditModeText => IsEditMode ? "完成" : "编辑列表";
+
     public string SelectedGroupId
     {
         get => _config.SelectedGroupId;
@@ -110,17 +133,60 @@ public class MainViewModel : INotifyPropertyChanged
         {
             if (_config.SortMode == value) return;
             _config.SortMode = value;
+            _config.SortColumn = value == "change" ? "change" : "default";
             _configStore.Save(_config);
             OnPropertyChanged();
             OnPropertyChanged(nameof(IsSortByChange));
             OnPropertyChanged(nameof(SortArrowText));
+            OnSortArrowsChanged();
+            OnPropertyChanged(nameof(CanReorder));
             RefreshVisibleStocks();
         }
     }
 
-    public bool IsSortByChange => SortMode == "change";
-    public string SortArrowText => IsSortByChange ? "▾" : "";
-    public bool CanReorder => !IsSortByChange;
+    public string SortColumn
+    {
+        get => _config.SortColumn;
+        set
+        {
+            if (_config.SortColumn == value) return;
+            _config.SortColumn = value;
+            _config.SortMode = value == "change" ? "change" : "default";
+            _configStore.Save(_config);
+            OnPropertyChanged();
+            OnPropertyChanged(nameof(IsSortByChange));
+            OnPropertyChanged(nameof(SortArrowText));
+            OnSortArrowsChanged();
+            OnPropertyChanged(nameof(CanReorder));
+            RefreshVisibleStocks();
+        }
+    }
+
+    public bool SortDescending
+    {
+        get => _config.SortDescending;
+        set
+        {
+            if (_config.SortDescending == value) return;
+            _config.SortDescending = value;
+            _configStore.Save(_config);
+            OnPropertyChanged();
+            OnPropertyChanged(nameof(SortArrowText));
+            OnSortArrowsChanged();
+            RefreshVisibleStocks();
+        }
+    }
+
+    public bool IsSortByChange => SortColumn == "change";
+    public string SortArrowText => SortColumn == "default" ? "" : (SortDescending ? "▾" : "▴");
+    public string ChangeSortArrow => GetSortArrow("change");
+    public string ProfitSortArrow => GetSortArrow("profit");
+    public string TurnoverSortArrow => GetSortArrow("turnover");
+    public string TurnoverRateSortArrow => GetSortArrow("turnoverRate");
+    public string SpeedSortArrow => GetSortArrow("speed");
+    public string VolumeRatioSortArrow => GetSortArrow("volumeRatio");
+    public string MarketValueSortArrow => GetSortArrow("marketValue");
+    public bool CanReorder => SortColumn == "default";
 
     private StockItem? _selectedStock;
     public StockItem? SelectedStock
@@ -187,7 +253,9 @@ public class MainViewModel : INotifyPropertyChanged
                 Code = entry.Code,
                 Market = entry.Market,
                 CustomName = entry.CustomName,
-                GroupId = entry.GroupId
+                GroupId = entry.GroupId,
+                HoldingShares = entry.HoldingShares,
+                HoldingCost = entry.HoldingCost
             });
         }
 
@@ -203,8 +271,50 @@ public class MainViewModel : INotifyPropertyChanged
 
     private void OnQuotesUpdated()
     {
-        if (IsSortByChange)
+        EvaluateAlerts();
+        OnPropertyChanged(nameof(HoldingMarketValueText));
+        OnPropertyChanged(nameof(HoldingProfitTotalText));
+        OnPropertyChanged(nameof(HoldingTodayProfitText));
+        if (SortColumn != "default")
             RefreshVisibleStocks();
+    }
+
+    public void AddAlert(StockItem stock, AlertMetric metric, AlertDirection direction, decimal threshold)
+    {
+        _config.AlertRules.RemoveAll(r => r.StockCode.Equals(stock.Code, StringComparison.OrdinalIgnoreCase)
+            && r.Metric == metric && r.Direction == direction);
+        _config.AlertRules.Add(new AlertRule { StockCode = stock.Code, Metric = metric, Direction = direction, Threshold = threshold });
+        _configStore.Save(_config);
+        OnPropertyChanged(nameof(AlertCount));
+    }
+
+    public void RemoveAlert(AlertRule rule)
+    {
+        _config.AlertRules.Remove(rule);
+        _configStore.Save(_config);
+        OnPropertyChanged(nameof(AlertCount));
+    }
+
+    private void EvaluateAlerts()
+    {
+        string today = DateTime.Now.ToString("yyyy-MM-dd");
+        foreach (var rule in _config.AlertRules.Where(r => r.Enabled && r.LastTriggeredDate != today).ToList())
+        {
+            var stock = Stocks.FirstOrDefault(s => s.Code.Equals(rule.StockCode, StringComparison.OrdinalIgnoreCase));
+            if (stock == null) continue;
+            decimal value = rule.Metric == AlertMetric.Price ? stock.CurrentPrice : stock.ChangePercent;
+            bool hit = rule.Direction == AlertDirection.Above ? value >= rule.Threshold : value <= rule.Threshold;
+            if (!hit) continue;
+            rule.LastTriggeredDate = today;
+            _configStore.Save(_config);
+            AlertTriggered?.Invoke($"{stock.DisplayName} {rule.Description}，当前 {value:0.##}");
+        }
+    }
+
+    private static string FormatMoney(decimal value)
+    {
+        decimal abs = Math.Abs(value);
+        return abs >= 100000000m ? $"{value / 100000000m:0.##}亿" : abs >= 10000m ? $"{value / 10000m:0.##}万" : $"{value:0.##}";
     }
 
     public void RebuildIndices()
@@ -273,11 +383,27 @@ public class MainViewModel : INotifyPropertyChanged
 
     public string? RemoveHomeIndex(string code) => ToggleHomeIndex(code);
 
+    public void MoveHomeIndex(string code, int offset)
+    {
+        int index = _config.HomeIndexCodes.FindIndex(c =>
+            string.Equals(c, code, StringComparison.OrdinalIgnoreCase));
+        if (index < 0) return;
+
+        int newIndex = index + offset;
+        if (newIndex < 0 || newIndex >= _config.HomeIndexCodes.Count) return;
+
+        (_config.HomeIndexCodes[index], _config.HomeIndexCodes[newIndex]) =
+            (_config.HomeIndexCodes[newIndex], _config.HomeIndexCodes[index]);
+        _configStore.Save(_config);
+        RebuildIndices();
+        RebuildIndexOptions();
+        _ = _quoteService.RefreshNowAsync();
+    }
+
     public void RefreshVisibleStocks()
     {
         var filtered = Stocks.Where(s => s.GroupId == SelectedGroupId).ToList();
-        if (IsSortByChange)
-            filtered = filtered.OrderByDescending(s => s.ChangePercent).ToList();
+        filtered = ApplySort(filtered).ToList();
 
         VisibleStocks.Clear();
         foreach (var s in filtered)
@@ -294,7 +420,51 @@ public class MainViewModel : INotifyPropertyChanged
 
     public void TogglePriceSort()
     {
-        SortMode = IsSortByChange ? "default" : "change";
+        ToggleSort("change");
+    }
+
+    public void ToggleSort(string column)
+    {
+        if (string.IsNullOrWhiteSpace(column)) return;
+
+        if (SortColumn == column)
+        {
+            if (SortDescending)
+            {
+                SortDescending = false;
+                return;
+            }
+
+            SortColumn = "default";
+            SortDescending = true;
+            return;
+        }
+
+        SortColumn = column;
+        SortDescending = true;
+    }
+
+    public string GetSortArrow(string column)
+    {
+        if (!string.Equals(SortColumn, column, StringComparison.OrdinalIgnoreCase))
+            return "";
+        return SortDescending ? "▾" : "▴";
+    }
+
+    private void OnSortArrowsChanged()
+    {
+        OnPropertyChanged(nameof(ChangeSortArrow));
+        OnPropertyChanged(nameof(ProfitSortArrow));
+        OnPropertyChanged(nameof(TurnoverSortArrow));
+        OnPropertyChanged(nameof(TurnoverRateSortArrow));
+        OnPropertyChanged(nameof(SpeedSortArrow));
+        OnPropertyChanged(nameof(VolumeRatioSortArrow));
+        OnPropertyChanged(nameof(MarketValueSortArrow));
+    }
+
+    public void ToggleEditMode()
+    {
+        IsEditMode = !IsEditMode;
     }
 
     public WatchlistGroup? AddGroup(string name)
@@ -325,6 +495,20 @@ public class MainViewModel : INotifyPropertyChanged
         _configStore.Save(_config);
         OnPropertyChanged(nameof(SelectedGroupName));
         return true;
+    }
+
+    // 拖拽调整分组顺序
+    public void MoveGroup(int fromIndex, int toIndex)
+    {
+        if (fromIndex < 0 || fromIndex >= Groups.Count) return;
+        if (toIndex < 0 || toIndex >= Groups.Count) return;
+        if (fromIndex == toIndex) return;
+
+        Groups.Move(fromIndex, toIndex);
+        var item = _config.Groups[fromIndex];
+        _config.Groups.RemoveAt(fromIndex);
+        _config.Groups.Insert(toIndex, item);
+        _configStore.Save(_config);
     }
 
     public bool DeleteGroup(string groupId)
@@ -391,8 +575,7 @@ public class MainViewModel : INotifyPropertyChanged
             SelectedStock = null;
 
         Stocks.RemoveAt(index);
-        int cfgIndex = _config.Watchlist.FindIndex(e =>
-            e.Code == stock.Code && e.GroupId == stock.GroupId);
+        int cfgIndex = FindWatchlistIndex(stock);
         if (cfgIndex >= 0)
             _config.Watchlist.RemoveAt(cfgIndex);
         else if (index < _config.Watchlist.Count)
@@ -408,9 +591,27 @@ public class MainViewModel : INotifyPropertyChanged
         if (index < 0) return;
 
         stock.CustomName = customName;
-        if (index < _config.Watchlist.Count)
-            _config.Watchlist[index].CustomName = customName;
+        int cfgIndex = FindWatchlistIndex(stock);
+        if (cfgIndex >= 0)
+            _config.Watchlist[cfgIndex].CustomName = customName;
         _configStore.Save(_config);
+    }
+
+    public void SetHolding(StockItem stock, decimal shares, decimal cost)
+    {
+        int index = Stocks.IndexOf(stock);
+        if (index < 0) return;
+
+        stock.HoldingShares = shares;
+        stock.HoldingCost = cost;
+
+        int cfgIndex = FindWatchlistIndex(stock);
+        if (cfgIndex >= 0)
+        {
+            _config.Watchlist[cfgIndex].HoldingShares = shares;
+            _config.Watchlist[cfgIndex].HoldingCost = cost;
+            _configStore.Save(_config);
+        }
     }
 
     public void MoveStockUp(StockItem stock)
@@ -427,6 +628,46 @@ public class MainViewModel : INotifyPropertyChanged
         int visIndex = VisibleStocks.IndexOf(stock);
         if (visIndex < 0 || visIndex >= VisibleStocks.Count - 1) return;
         MoveVisibleStock(visIndex, visIndex + 1);
+    }
+
+    public void MoveStockToTop(StockItem stock)
+    {
+        if (!CanReorder) return;
+        int visIndex = VisibleStocks.IndexOf(stock);
+        if (visIndex <= 0) return;
+        MoveVisibleStock(visIndex, 0);
+    }
+
+    public void MoveStockToBottom(StockItem stock)
+    {
+        if (!CanReorder) return;
+        int visIndex = VisibleStocks.IndexOf(stock);
+        if (visIndex < 0 || visIndex >= VisibleStocks.Count - 1) return;
+        MoveVisibleStock(visIndex, VisibleStocks.Count - 1);
+    }
+
+    public bool MoveStockToGroup(StockItem stock, string groupId)
+    {
+        if (string.IsNullOrEmpty(groupId) || Groups.All(g => g.Id != groupId)) return false;
+        int index = Stocks.IndexOf(stock);
+        if (index < 0 || stock.GroupId == groupId) return false;
+
+        int cfgIndex = FindWatchlistIndex(stock);
+        stock.GroupId = groupId;
+        if (cfgIndex >= 0)
+            _config.Watchlist[cfgIndex].GroupId = groupId;
+
+        _configStore.Save(_config);
+        RefreshVisibleStocks();
+        return true;
+    }
+
+    public bool RemoveStockFromCurrentGroup(StockItem stock)
+    {
+        if (Groups.Count <= 1) return false;
+        var target = Groups.FirstOrDefault(g => g.Id != stock.GroupId);
+        if (target == null) return false;
+        return MoveStockToGroup(stock, target.Id);
     }
 
     public void MoveVisibleStock(int fromVisibleIndex, int toVisibleIndex)
@@ -449,6 +690,42 @@ public class MainViewModel : INotifyPropertyChanged
         _config.Watchlist.Insert(to, item);
         _configStore.Save(_config);
         RefreshVisibleStocks();
+    }
+
+    private int FindWatchlistIndex(StockItem stock)
+    {
+        int index = Stocks.IndexOf(stock);
+        if (index >= 0 && index < _config.Watchlist.Count && ReferenceMatches(_config.Watchlist[index], stock))
+            return index;
+
+        return _config.Watchlist.FindIndex(e => ReferenceMatches(e, stock));
+    }
+
+    private static bool ReferenceMatches(WatchlistEntry entry, StockItem stock) =>
+        string.Equals(entry.Code, stock.Code, StringComparison.OrdinalIgnoreCase)
+        && string.Equals(entry.GroupId, stock.GroupId, StringComparison.OrdinalIgnoreCase);
+
+    private IEnumerable<StockItem> ApplySort(IEnumerable<StockItem> stocks)
+    {
+        Func<StockItem, decimal> selector = SortColumn switch
+        {
+            "price" => s => s.CurrentPrice,
+            "change" => s => s.ChangePercent,
+            "profit" => s => s.HoldingProfit,
+            "turnover" => s => s.Turnover,
+            "turnoverRate" => s => s.TurnoverRate,
+            "speed" => s => s.Speed,
+            "volumeRatio" => s => s.VolumeRatio,
+            "marketValue" => s => s.FloatMarketValue > 0 ? s.FloatMarketValue : s.TotalMarketValue,
+            _ => s => 0
+        };
+
+        if (SortColumn == "default")
+            return stocks;
+
+        return SortDescending
+            ? stocks.OrderByDescending(selector).ThenBy(s => s.DisplayName)
+            : stocks.OrderBy(selector).ThenBy(s => s.DisplayName);
     }
 
     public void SaveWindowState(double left, double top, double width, double height)

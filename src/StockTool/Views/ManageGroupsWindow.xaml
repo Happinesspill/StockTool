@@ -162,7 +162,13 @@
                      Grid.Row="2"
                      BorderThickness="0"
                      Background="Transparent"
-                     ScrollViewer.HorizontalScrollBarVisibility="Disabled">
+                     ScrollViewer.HorizontalScrollBarVisibility="Disabled"
+                     AllowDrop="True"
+                     PreviewMouseLeftButtonDown="GroupList_PreviewMouseLeftButtonDown"
+                     PreviewMouseMove="GroupList_PreviewMouseMove"
+                     Drop="GroupList_Drop"
+                     GiveFeedback="GroupList_GiveFeedback"
+                     DragOver="GroupList_DragOver">
                 <ListBox.ItemContainerStyle>
                     <Style TargetType="ListBoxItem">
                         <Setter Property="Padding" Value="0" />

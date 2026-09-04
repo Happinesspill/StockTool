@@ -29,6 +29,10 @@ public class QuoteItem
     public decimal F5 { get; set; }  // volume (shares)
     [JsonConverter(typeof(FlexibleDecimalConverter))]
     public decimal F6 { get; set; }  // turnover (amount)
+    [JsonConverter(typeof(FlexibleDecimalConverter))]
+    public decimal F8 { get; set; }  // turnover rate
+    [JsonConverter(typeof(FlexibleDecimalConverter))]
+    public decimal F10 { get; set; } // volume ratio
     public string? F12 { get; set; } // code
     [JsonConverter(typeof(FlexibleIntConverter))]
     public int F13 { get; set; }     // market
@@ -41,6 +45,12 @@ public class QuoteItem
     public decimal F17 { get; set; } // yesterday close
     [JsonConverter(typeof(FlexibleDecimalConverter))]
     public decimal F18 { get; set; } // open
+    [JsonConverter(typeof(FlexibleDecimalConverter))]
+    public decimal F20 { get; set; } // total market value
+    [JsonConverter(typeof(FlexibleDecimalConverter))]
+    public decimal F21 { get; set; } // float market value
+    [JsonConverter(typeof(FlexibleDecimalConverter))]
+    public decimal F22 { get; set; } // speed
 }
 
 public class IntradayResponse

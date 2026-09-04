@@ -168,7 +168,7 @@ public class EastMoneyClient
         string url = $"https://push2.eastmoney.com/api/qt/ulist/get" +
                      $"?fltt=2" +
                      $"&invt=2" +
-                     $"&fields=f2,f3,f4,f5,f6,f12,f13,f14,f15,f16,f17,f18" +
+                     $"&fields=f2,f3,f4,f5,f6,f8,f10,f12,f13,f14,f15,f16,f17,f18,f20,f21,f22" +
                      $"&secids={Uri.EscapeDataString(secids)}" +
                      $"&ut=fa5fd1943c7b386f172d6893dbfba10b" +
                      $"&pn=1&np=1&pz=200" +
@@ -272,13 +272,18 @@ public class EastMoneyClient
                     F3 = pct,
                     F5 = volume,
                     F6 = turnover,
+                    F8 = 0,
+                    F10 = 0,
                     F12 = code,
                     F13 = market,
                     F14 = isHk ? f[1] : f[0],
                     F15 = high,
                     F16 = low,
                     F17 = preClose,
-                    F18 = open
+                    F18 = open,
+                    F20 = 0,
+                    F21 = 0,
+                    F22 = 0
                 });
             }
             return result;
@@ -328,6 +333,9 @@ public class EastMoneyClient
                 TryParseDec(f.Length > 6 ? f[6] : "0", out var volume);
                 // 成交额：腾讯为万元，转成元与东财字段对齐
                 TryParseDec(f.Length > 37 ? f[37] : "0", out var turnoverWan);
+                TryParseDec(f.Length > 38 ? f[38] : "0", out var turnoverRate);
+                TryParseDec(f.Length > 49 ? f[49] : "0", out var volumeRatio);
+                TryParseDec(f.Length > 80 ? f[80] : "0", out var speed);
 
                 string code = f[2];
                 string head = segment[..eq]; // v_sh600036
@@ -341,13 +349,16 @@ public class EastMoneyClient
                     F3 = pct,
                     F5 = volume,
                     F6 = turnoverWan * 10000m,
+                    F8 = turnoverRate,
+                    F10 = volumeRatio,
                     F12 = code,
                     F13 = market,
                     F14 = f[1],
                     F15 = high,
                     F16 = low,
                     F17 = preClose,
-                    F18 = open
+                    F18 = open,
+                    F22 = speed
                 });
             }
             return result;

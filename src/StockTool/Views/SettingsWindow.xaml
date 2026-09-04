@@ -223,7 +223,60 @@
                       Content="显示市场标签（沪A/深A/港股/ETF）"
                       Foreground="#555555"
                       FontSize="13"
-                      Margin="0,0,0,20" />
+                      Margin="0,0,0,14" />
+
+            <TextBlock Text="首页指数排序"
+                       Foreground="#27364A"
+                       FontSize="13"
+                       FontWeight="SemiBold"
+                       Margin="0,0,0,8" />
+            <ItemsControl ItemsSource="{Binding SelectedHomeIndices}"
+                          Margin="0,0,0,18">
+                <ItemsControl.ItemTemplate>
+                    <DataTemplate>
+                        <Border Background="#F6F8FB"
+                                BorderBrush="#E7ECF2"
+                                BorderThickness="1"
+                                CornerRadius="7"
+                                Padding="10,7"
+                                Margin="0,0,0,6">
+                            <Grid>
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*" />
+                                    <ColumnDefinition Width="Auto" />
+                                </Grid.ColumnDefinitions>
+                                <StackPanel>
+                                    <TextBlock Text="{Binding Name}"
+                                               Foreground="#27364A"
+                                               FontSize="12"
+                                               FontWeight="SemiBold" />
+                                    <TextBlock Text="{Binding DisplayCode}"
+                                               Foreground="#8FA0B6"
+                                               FontSize="10"
+                                               Margin="0,2,0,0" />
+                                </StackPanel>
+                                <StackPanel Grid.Column="1"
+                                            Orientation="Horizontal"
+                                            VerticalAlignment="Center">
+                                    <Button Content="↑"
+                                            Width="26"
+                                            Height="24"
+                                            Tag="{Binding Code}"
+                                            Style="{StaticResource DialogButtonStyle}"
+                                            Click="BtnMoveIndexUp_Click" />
+                                    <Button Content="↓"
+                                            Width="26"
+                                            Height="24"
+                                            Margin="5,0,0,0"
+                                            Tag="{Binding Code}"
+                                            Style="{StaticResource DialogButtonStyle}"
+                                            Click="BtnMoveIndexDown_Click" />
+                                </StackPanel>
+                            </Grid>
+                        </Border>
+                    </DataTemplate>
+                </ItemsControl.ItemTemplate>
+            </ItemsControl>
 
             <!-- Buttons -->
             <Grid>

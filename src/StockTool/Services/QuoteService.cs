@@ -114,6 +114,11 @@ public class QuoteService
                     stock.Low = quote.F16;
                     stock.Volume = quote.F5;
                     stock.Turnover = quote.F6;
+                    stock.TurnoverRate = quote.F8;
+                    stock.VolumeRatio = quote.F10;
+                    stock.TotalMarketValue = quote.F20;
+                    stock.FloatMarketValue = quote.F21;
+                    stock.Speed = quote.F22;
                 }
 
                 foreach (var index in _indices)

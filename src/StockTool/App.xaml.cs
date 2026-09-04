@@ -25,6 +25,10 @@ public partial class App : System.Windows.Application
         _eastMoneyClient = new EastMoneyClient();
 
         var viewModel = new MainViewModel(configStore, _eastMoneyClient);
+        viewModel.AlertTriggered += message => _mainWindow?.Dispatcher.Invoke(() =>
+        {
+            _trayIcon?.ShowBalloonTip(4000, "盯盘预警", message, WinForms.ToolTipIcon.Info);
+        });
 
         _mainWindow = new MainWindow(viewModel, _eastMoneyClient);
 
