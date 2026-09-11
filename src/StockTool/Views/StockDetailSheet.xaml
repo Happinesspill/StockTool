@@ -1,0 +1,345 @@
+<UserControl x:Class="StockTool.Views.StockDetailSheet"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:controls="clr-namespace:StockTool.Controls"
+             xmlns:conv="clr-namespace:StockTool.Converters"
+             Panel.ZIndex="20">
+
+    <UserControl.Resources>
+        <conv:NegativeToBooleanConverter x:Key="NegativeConverter" />
+        <conv:NotNullToVisibleConverter x:Key="NotNullConverter" />
+        <conv:EqualsToVisibilityConverter x:Key="EqualsVisConverter" />
+        <conv:DoubleOffsetConverter x:Key="DoubleOffsetConverter" />
+
+        <Style x:Key="PeriodTabButtonStyle" TargetType="Button">
+            <Setter Property="Height" Value="26" />
+            <Setter Property="MinWidth" Value="40" />
+            <Setter Property="FontSize" Value="12" />
+            <Setter Property="Cursor" Value="Hand" />
+            <Setter Property="BorderThickness" Value="0" />
+            <Setter Property="Background" Value="Transparent" />
+            <Setter Property="Foreground" Value="#666666" />
+            <Setter Property="Margin" Value="1,0" />
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <Border x:Name="Bd"
+                                Background="{TemplateBinding Background}"
+                                CornerRadius="13"
+                                Padding="10,0">
+                            <ContentPresenter HorizontalAlignment="Center"
+                                              VerticalAlignment="Center" />
+                        </Border>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <Style x:Key="TitleBarButtonStyle" TargetType="Button">
+            <Setter Property="Width" Value="32" />
+            <Setter Property="Height" Value="28" />
+            <Setter Property="Background" Value="Transparent" />
+            <Setter Property="Foreground" Value="#555555" />
+            <Setter Property="BorderThickness" Value="0" />
+            <Setter Property="FontSize" Value="16" />
+            <Setter Property="Cursor" Value="Hand" />
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <Border Background="{TemplateBinding Background}"
+                                CornerRadius="4">
+                            <ContentPresenter HorizontalAlignment="Center"
+                                              VerticalAlignment="Center" />
+                        </Border>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+            <Style.Triggers>
+                <Trigger Property="IsMouseOver" Value="True">
+                    <Setter Property="Background" Value="#15CCCCCC" />
+                </Trigger>
+            </Style.Triggers>
+        </Style>
+
+        <Style x:Key="TitleBarCloseButtonStyle" TargetType="Button"
+               BasedOn="{StaticResource TitleBarButtonStyle}">
+            <Style.Triggers>
+                <Trigger Property="IsMouseOver" Value="True">
+                    <Setter Property="Background" Value="#E81123" />
+                    <Setter Property="Foreground" Value="White" />
+                </Trigger>
+            </Style.Triggers>
+        </Style>
+    </UserControl.Resources>
+
+    <Grid Visibility="{Binding SelectedStock, Converter={StaticResource NotNullConverter}, FallbackValue=Collapsed, TargetNullValue=Collapsed}">
+        <!-- Dim mask: click to close -->
+        <Border Background="#33000000"
+                PreviewMouseLeftButtonDown="DetailMask_PreviewMouseLeftButtonDown"
+                MouseLeftButtonUp="DetailMask_MouseLeftButtonUp" />
+
+        <!-- Sheet -->
+        <Border x:Name="DetailSheetBorder"
+                VerticalAlignment="Bottom"
+                MaxHeight="{Binding ActualHeight, RelativeSource={RelativeSource AncestorType=Window}, Converter={StaticResource DoubleOffsetConverter}, ConverterParameter=-36}"
+                Background="#FFFFFFFF"
+                BorderBrush="#E5E5E5"
+                BorderThickness="0,1,0,0"
+                CornerRadius="16,16,0,0"
+                Padding="0"
+                RenderTransformOrigin="0.5,1"
+                MouseLeftButtonDown="DetailSheet_MouseLeftButtonDown">
+            <Border.RenderTransform>
+                <TranslateTransform x:Name="DetailSheetTransform" Y="0" />
+            </Border.RenderTransform>
+            <Border.Effect>
+                <DropShadowEffect BlurRadius="16" ShadowDepth="0" Opacity="0.18" Color="#000000" />
+            </Border.Effect>
+
+            <ScrollViewer VerticalScrollBarVisibility="Auto"
+                          HorizontalScrollBarVisibility="Disabled"
+                          CanContentScroll="False">
+                <StackPanel Margin="14,8,14,12" DataContext="{Binding SelectedStock}">
+                    <!-- Handle + close -->
+                    <Grid Margin="0,0,0,6">
+                        <Button HorizontalAlignment="Center"
+                                VerticalAlignment="Center"
+                                Cursor="Hand"
+                                Click="BtnExpandDetail_Click"
+                                ToolTip="展开/收起指标">
+                            <Button.Template>
+                                <ControlTemplate TargetType="Button">
+                                    <Border Background="Transparent" Padding="12,4">
+                                        <TextBlock Text="{Binding DataContext.ExpandHintText, RelativeSource={RelativeSource AncestorType=Window}}"
+                                                   Foreground="#888888"
+                                                   FontSize="11"
+                                                   HorizontalAlignment="Center" />
+                                    </Border>
+                                </ControlTemplate>
+                            </Button.Template>
+                        </Button>
+                        <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
+                            <Button Content="∨"
+                                    Style="{StaticResource TitleBarButtonStyle}"
+                                    Width="28" Height="28"
+                                    FontSize="12"
+                                    ToolTip="收起"
+                                    Click="BtnCollapseDetail_Click" />
+                            <Button Content="✕"
+                                    Style="{StaticResource TitleBarCloseButtonStyle}"
+                                    Width="28" Height="28"
+                                    FontSize="12"
+                                    ToolTip="关闭"
+                                    Click="BtnCloseDetail_Click" />
+                        </StackPanel>
+                    </Grid>
+
+                    <!-- Name / code / price header -->
+                    <Grid Margin="0,0,0,10">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+
+                        <StackPanel Grid.Column="0">
+                            <StackPanel Orientation="Horizontal">
+                                <TextBlock Text="{Binding DisplayName}"
+                                           Foreground="#1A1A1A"
+                                           FontSize="16" FontWeight="Bold" />
+                                <TextBlock Text="{Binding CodeNumeric}"
+                                           Foreground="#999999"
+                                           FontSize="12"
+                                           VerticalAlignment="Bottom"
+                                           Margin="8,0,0,2" />
+                            </StackPanel>
+                            <StackPanel Orientation="Horizontal" Margin="0,6,0,0">
+                                <TextBlock Text="{Binding PriceText}"
+                                           FontSize="22" FontWeight="Bold"
+                                           VerticalAlignment="Bottom">
+                                    <TextBlock.Style>
+                                        <Style TargetType="TextBlock">
+                                            <Setter Property="Foreground" Value="#D93025" />
+                                            <Style.Triggers>
+                                                <DataTrigger Binding="{Binding Path=ChangePercent, Converter={StaticResource NegativeConverter}}" Value="True">
+                                                    <Setter Property="Foreground" Value="#1A8C3F" />
+                                                </DataTrigger>
+                                                <DataTrigger Binding="{Binding ChangePercent}" Value="0">
+                                                    <Setter Property="Foreground" Value="#888888" />
+                                                </DataTrigger>
+                                            </Style.Triggers>
+                                        </Style>
+                                    </TextBlock.Style>
+                                </TextBlock>
+                                <TextBlock FontSize="13" FontWeight="SemiBold"
+                                           VerticalAlignment="Bottom" Margin="10,0,0,3">
+                                    <TextBlock.Style>
+                                        <Style TargetType="TextBlock">
+                                            <Setter Property="Foreground" Value="#D93025" />
+                                            <Style.Triggers>
+                                                <DataTrigger Binding="{Binding Path=ChangePercent, Converter={StaticResource NegativeConverter}}" Value="True">
+                                                    <Setter Property="Foreground" Value="#1A8C3F" />
+                                                </DataTrigger>
+                                                <DataTrigger Binding="{Binding ChangePercent}" Value="0">
+                                                    <Setter Property="Foreground" Value="#888888" />
+                                                </DataTrigger>
+                                            </Style.Triggers>
+                                        </Style>
+                                    </TextBlock.Style>
+                                    <Run Text="{Binding ChangePercent, StringFormat={}{0:+0.00;-0.00;0.00}}" />
+                                    <Run Text="%" />
+                                </TextBlock>
+                                <TextBlock Foreground="#999999" FontSize="12"
+                                           VerticalAlignment="Bottom" Margin="12,0,0,3"
+                                           Text="{Binding Open, StringFormat=今开 {0:F2}}" />
+                            </StackPanel>
+                        </StackPanel>
+                    </Grid>
+
+                    <!-- Stats card: 最高 / 最低 / 成交额 -->
+                    <Border Background="#F5F6F8"
+                            CornerRadius="10"
+                            Padding="8,10"
+                            Margin="0,0,0,10">
+                        <Grid>
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="*" />
+                            </Grid.ColumnDefinitions>
+                            <StackPanel Grid.Column="0" HorizontalAlignment="Center">
+                                <TextBlock Text="最高" Foreground="#999999" FontSize="11" HorizontalAlignment="Center" />
+                                <TextBlock Text="{Binding High, StringFormat={}{0:F2}}" Foreground="#D93025"
+                                           FontSize="14" FontWeight="SemiBold" HorizontalAlignment="Center" Margin="0,4,0,0" />
+                            </StackPanel>
+                            <StackPanel Grid.Column="1" HorizontalAlignment="Center">
+                                <TextBlock Text="最低" Foreground="#999999" FontSize="11" HorizontalAlignment="Center" />
+                                <TextBlock Text="{Binding Low, StringFormat={}{0:F2}}" Foreground="#1A8C3F"
+                                           FontSize="14" FontWeight="SemiBold" HorizontalAlignment="Center" Margin="0,4,0,0" />
+                            </StackPanel>
+                            <StackPanel Grid.Column="2" HorizontalAlignment="Center">
+                                <TextBlock Text="成交额" Foreground="#999999" FontSize="11" HorizontalAlignment="Center" />
+                                <TextBlock Text="{Binding TurnoverText}" Foreground="#1A1A1A"
+                                           FontSize="14" FontWeight="SemiBold" HorizontalAlignment="Center" Margin="0,4,0,0" />
+                            </StackPanel>
+                        </Grid>
+                    </Border>
+
+                    <!-- Period pill selector -->
+                    <Border Background="#F0F1F3" CornerRadius="16" Padding="3" Margin="0,0,0,8">
+                        <UniformGrid Columns="7" Rows="1">
+                            <Button Content="分时" Tag="0" Click="KlinePeriod_Click">
+                                <Button.Style>
+                                    <Style TargetType="Button" BasedOn="{StaticResource PeriodTabButtonStyle}">
+                                        <Style.Triggers>
+                                            <DataTrigger Binding="{Binding KlinePeriod}" Value="0">
+                                                <Setter Property="Background" Value="#FFFFFF" />
+                                                <Setter Property="Foreground" Value="#1A1A1A" />
+                                                <Setter Property="FontWeight" Value="SemiBold" />
+                                            </DataTrigger>
+                                        </Style.Triggers>
+                                    </Style>
+                                </Button.Style>
+                            </Button>
+                            <Button Content="5分" Tag="5" Click="KlinePeriod_Click">
+                                <Button.Style>
+                                    <Style TargetType="Button" BasedOn="{StaticResource PeriodTabButtonStyle}">
+                                        <Style.Triggers>
+                                            <DataTrigger Binding="{Binding KlinePeriod}" Value="5">
+                                                <Setter Property="Background" Value="#FFFFFF" />
+                                                <Setter Property="Foreground" Value="#1A1A1A" />
+                                                <Setter Property="FontWeight" Value="SemiBold" />
+                                            </DataTrigger>
+                                        </Style.Triggers>
+                                    </Style>
+                                </Button.Style>
+                            </Button>
+                            <Button Content="15分" Tag="15" Click="KlinePeriod_Click">
+                                <Button.Style>
+                                    <Style TargetType="Button" BasedOn="{StaticResource PeriodTabButtonStyle}">
+                                        <Style.Triggers>
+                                            <DataTrigger Binding="{Binding KlinePeriod}" Value="15">
+                                                <Setter Property="Background" Value="#FFFFFF" />
+                                                <Setter Property="Foreground" Value="#1A1A1A" />
+                                                <Setter Property="FontWeight" Value="SemiBold" />
+                                            </DataTrigger>
+                                        </Style.Triggers>
+                                    </Style>
+                                </Button.Style>
+                            </Button>
+                            <Button Content="30分" Tag="30" Click="KlinePeriod_Click">
+                                <Button.Style>
+                                    <Style TargetType="Button" BasedOn="{StaticResource PeriodTabButtonStyle}">
+                                        <Style.Triggers>
+                                            <DataTrigger Binding="{Binding KlinePeriod}" Value="30">
+                                                <Setter Property="Background" Value="#FFFFFF" />
+                                                <Setter Property="Foreground" Value="#1A1A1A" />
+                                                <Setter Property="FontWeight" Value="SemiBold" />
+                                            </DataTrigger>
+                                        </Style.Triggers>
+                                    </Style>
+                                </Button.Style>
+                            </Button>
+                            <Button Content="60分" Tag="60" Click="KlinePeriod_Click">
+                                <Button.Style>
+                                    <Style TargetType="Button" BasedOn="{StaticResource PeriodTabButtonStyle}">
+                                        <Style.Triggers>
+                                            <DataTrigger Binding="{Binding KlinePeriod}" Value="60">
+                                                <Setter Property="Background" Value="#FFFFFF" />
+                                                <Setter Property="Foreground" Value="#1A1A1A" />
+                                                <Setter Property="FontWeight" Value="SemiBold" />
+                                            </DataTrigger>
+                                        </Style.Triggers>
+                                    </Style>
+                                </Button.Style>
+                            </Button>
+                            <Button Content="日线" Tag="101" Click="KlinePeriod_Click">
+                                <Button.Style>
+                                    <Style TargetType="Button" BasedOn="{StaticResource PeriodTabButtonStyle}">
+                                        <Style.Triggers>
+                                            <DataTrigger Binding="{Binding KlinePeriod}" Value="101">
+                                                <Setter Property="Background" Value="#FFFFFF" />
+                                                <Setter Property="Foreground" Value="#1A1A1A" />
+                                                <Setter Property="FontWeight" Value="SemiBold" />
+                                            </DataTrigger>
+                                        </Style.Triggers>
+                                    </Style>
+                                </Button.Style>
+                            </Button>
+                            <Button Content="周线" Tag="102" Click="KlinePeriod_Click">
+                                <Button.Style>
+                                    <Style TargetType="Button" BasedOn="{StaticResource PeriodTabButtonStyle}">
+                                        <Style.Triggers>
+                                            <DataTrigger Binding="{Binding KlinePeriod}" Value="102">
+                                                <Setter Property="Background" Value="#FFFFFF" />
+                                                <Setter Property="Foreground" Value="#1A1A1A" />
+                                                <Setter Property="FontWeight" Value="SemiBold" />
+                                            </DataTrigger>
+                                        </Style.Triggers>
+                                    </Style>
+                                </Button.Style>
+                            </Button>
+                        </UniformGrid>
+                    </Border>
+
+                    <!-- Charts: 分时折线 / K线蜡烛+指标 -->
+                    <Grid MinHeight="180">
+                        <controls:SparklineControl
+                            Points="{Binding IntradayPoints}"
+                            AvgPoints="{Binding IntradayAvgPoints}"
+                            BaseLine="{Binding YesterdayClose}"
+                            IsUp="{Binding IsUp}"
+                            ShowLabels="True"
+                            VisibleSubCount="{Binding DataContext.ChartSubCount, RelativeSource={RelativeSource AncestorType=Window}}"
+                            Margin="0,2"
+                            Visibility="{Binding KlinePeriod, Converter={StaticResource EqualsVisConverter}, ConverterParameter=0}" />
+                        <controls:KlineChartControl
+                            KlineData="{Binding KlineData}"
+                            VisibleSubCount="{Binding DataContext.ChartSubCount, RelativeSource={RelativeSource AncestorType=Window}}"
+                            Margin="0,2"
+                            Visibility="{Binding KlinePeriod, Converter={StaticResource EqualsVisConverter}, ConverterParameter='!0'}" />
+                    </Grid>
+                </StackPanel>
+            </ScrollViewer>
+        </Border>
+    </Grid>
+</UserControl>

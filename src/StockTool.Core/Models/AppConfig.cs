@@ -28,7 +28,7 @@ public class AppConfig
     public bool Topmost { get; set; } = true;
     public bool ShowMarketTag { get; set; } = true;
 
-    /// <summary>旧配置无分组时迁移为「自选」+ 空「港股」「ETF」。</summary>
+    /// <summary>旧配置无分组时迁移为「自选」+ 空「港股」「ETF」「基金」；「自选」固定首位。</summary>
     public void EnsureGroupsMigrated()
     {
         if (Groups.Count == 0)
@@ -36,12 +36,36 @@ public class AppConfig
             var zixuan = new WatchlistGroup { Id = Guid.NewGuid().ToString("N"), Name = "自选" };
             var ganggu = new WatchlistGroup { Id = Guid.NewGuid().ToString("N"), Name = "港股" };
             var etf = new WatchlistGroup { Id = Guid.NewGuid().ToString("N"), Name = "ETF" };
-            Groups = [zixuan, ganggu, etf];
+            var jijin = new WatchlistGroup { Id = Guid.NewGuid().ToString("N"), Name = "基金" };
+            Groups = [zixuan, ganggu, etf, jijin];
             SelectedGroupId = zixuan.Id;
             foreach (var entry in Watchlist)
                 entry.GroupId = zixuan.Id;
             EnsureHomeIndicesMigrated();
             return;
+        }
+
+        // 移除历史上误存的「持仓」实分组，股票归入「自选」
+        var legacyHolding = Groups.Where(g => g.Name == WatchlistGroup.HoldingGroupName).ToList();
+        var zixuanGroup = Groups.FirstOrDefault(g => g.Name == "自选");
+        if (zixuanGroup == null)
+        {
+            zixuanGroup = new WatchlistGroup { Id = Guid.NewGuid().ToString("N"), Name = "自选" };
+            Groups.Insert(0, zixuanGroup);
+        }
+
+        foreach (var hg in legacyHolding)
+        {
+            foreach (var entry in Watchlist.Where(e => e.GroupId == hg.Id))
+                entry.GroupId = zixuanGroup.Id;
+            Groups.Remove(hg);
+        }
+
+        int zixuanIndex = Groups.IndexOf(zixuanGroup);
+        if (zixuanIndex > 0)
+        {
+            Groups.RemoveAt(zixuanIndex);
+            Groups.Insert(0, zixuanGroup);
         }
 
         string fallback = Groups[0].Id;
@@ -51,7 +75,11 @@ public class AppConfig
                 entry.GroupId = fallback;
         }
 
-        if (string.IsNullOrEmpty(SelectedGroupId) || Groups.All(g => g.Id != SelectedGroupId))
+        if (Groups.All(g => g.Name != "基金"))
+            Groups.Add(new WatchlistGroup { Id = Guid.NewGuid().ToString("N"), Name = "基金" });
+
+        if (string.IsNullOrEmpty(SelectedGroupId) ||
+            (SelectedGroupId != WatchlistGroup.HoldingGroupId && Groups.All(g => g.Id != SelectedGroupId)))
             SelectedGroupId = Groups[0].Id;
 
         if (SortMode is not ("default" or "change"))
@@ -104,6 +132,9 @@ public class AlertRule
 
 public class WatchlistGroup : INotifyPropertyChanged
 {
+    public const string HoldingGroupId = "__holding__";
+    public const string HoldingGroupName = "持仓";
+
     private string _id = string.Empty;
     private string _name = string.Empty;
 

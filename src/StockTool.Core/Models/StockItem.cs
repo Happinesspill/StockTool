@@ -48,7 +48,7 @@ public class StockItem : INotifyPropertyChanged
     public string Code
     {
         get => _code;
-        set { _code = value; OnPropertyChanged(); OnPropertyChanged(nameof(CodeNumeric)); }
+        set { _code = value; OnPropertyChanged(); OnPropertyChanged(nameof(CodeNumeric)); OnPropertyChanged(nameof(IsFund)); OnPropertyChanged(nameof(PriceText)); }
     }
 
     public string CodeNumeric => _code.Length > 2 ? _code[2..] : _code;
@@ -56,7 +56,59 @@ public class StockItem : INotifyPropertyChanged
     public string Market
     {
         get => _market;
-        set { _market = value; OnPropertyChanged(); }
+        set { _market = value; OnPropertyChanged(); OnPropertyChanged(nameof(IsFund)); OnPropertyChanged(nameof(PriceText)); }
+    }
+
+    // 场外基金走天天基金估值接口；场内 ETF/LOF 与股票一样走行情接口
+    public bool IsFund =>
+        !IsExchangeFund
+        && (string.Equals(_market, "基金", StringComparison.OrdinalIgnoreCase)
+            || _code.StartsWith("FD", StringComparison.OrdinalIgnoreCase));
+
+    /// <summary>是否场内 ETF/LOF（沪 5 字头场内基金、深 159/16x）</summary>
+    public bool IsExchangeFund => IsExchangeFundCode(_code);
+
+    public static bool IsExchangeFundCode(string? code) => ExchangeMarketPrefix(code) != null;
+
+    /// <summary>场内基金代码判定：返回所属市场前缀 SH/SZ，非场内基金返回 null</summary>
+    public static string? ExchangeMarketPrefix(string? code)
+    {
+        string digits = NumericPartOf(code);
+        if (digits.Length != 6) return null;
+
+        // 取前三位做区段判定，顺带校验是否全数字
+        int head = 0;
+        foreach (char c in digits)
+        {
+            if (c is < '0' or > '9') return null;
+            head = head * 10 + (c - '0');
+        }
+        head /= 1000;
+
+        // 沪市：500-523（封闭/LOF/ETF）、560-563（ETF）、588-589（科创 ETF）
+        if ((head >= 500 && head <= 523) || (head >= 560 && head <= 563) || (head >= 588 && head <= 589))
+            return "SH";
+        // 深市：159（ETF）、160-169（LOF）
+        if (head == 159 || (head >= 160 && head <= 169))
+            return "SZ";
+        return null;
+    }
+
+    /// <summary>归一化为行情接口代码：FD513310 / 513310 → SH513310</summary>
+    public static string ToExchangeCode(string? code)
+    {
+        string? prefix = ExchangeMarketPrefix(code);
+        return prefix == null ? code ?? string.Empty : prefix + NumericPartOf(code);
+    }
+
+    /// <summary>去掉 FD/SH/SZ/HK 前缀，取纯数字代码</summary>
+    public static string NumericPartOf(string? code)
+    {
+        if (string.IsNullOrWhiteSpace(code)) return string.Empty;
+        string s = code.Trim().ToUpperInvariant();
+        if (s.Length > 2 && (s.StartsWith("FD") || s.StartsWith("SH") || s.StartsWith("SZ") || s.StartsWith("HK")))
+            s = s[2..];
+        return s;
     }
 
     public string GroupId
@@ -72,6 +124,7 @@ public class StockItem : INotifyPropertyChanged
         {
             _currentPrice = value;
             OnPropertyChanged();
+            OnPropertyChanged(nameof(PriceText));
             OnPropertyChanged(nameof(HoldingProfit));
             OnPropertyChanged(nameof(HoldingProfitPercent));
             OnPropertyChanged(nameof(TodayHoldingProfit));
@@ -86,6 +139,8 @@ public class StockItem : INotifyPropertyChanged
     }
 
     public bool IsUp => _changePercent >= 0;
+
+    public string PriceText => IsFund ? $"{_currentPrice:F4}" : $"{_currentPrice:F2}";
 
     public decimal YesterdayClose
     {

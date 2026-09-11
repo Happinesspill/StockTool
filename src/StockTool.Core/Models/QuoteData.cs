@@ -81,6 +81,39 @@ public class SearchItem
     public string? SecurityTypeName { get; set; }
 }
 
+public class FundSearchResponse
+{
+    public List<FundSearchItem>? Datas { get; set; }
+}
+
+public class FundSearchItem
+{
+    public string? Code { get; set; }
+    public string? Name { get; set; }
+    public int Category { get; set; }
+    public string? CategoryDesc { get; set; }
+}
+
+public class FundValuationResponse
+{
+    public List<FundValuationItem>? Data { get; set; }
+    public bool Success { get; set; }
+}
+
+public class FundValuationItem
+{
+    public string? FCODE { get; set; }
+    public string? SHORTNAME { get; set; }
+    [JsonConverter(typeof(FlexibleDecimalConverter))]
+    public decimal GSZ { get; set; }
+    [JsonConverter(typeof(FlexibleDecimalConverter))]
+    public decimal GSZZL { get; set; }
+    [JsonConverter(typeof(FlexibleDecimalConverter))]
+    public decimal NAV { get; set; }
+    public string? GZTIME { get; set; }
+    public string? PDATE { get; set; }
+}
+
 // ── K-line ──────────────────────────────────────
 
 public class KlineResponse

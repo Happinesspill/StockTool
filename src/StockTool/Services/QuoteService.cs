@@ -43,8 +43,15 @@ public class QuoteService
 
         try
         {
-            var stockCodes = _stocks.Select(s => s.Code)
-                .Where(c => !string.IsNullOrEmpty(c))
+            var fundCodes = _stocks
+                .Where(s => s.IsFund && !string.IsNullOrEmpty(s.Code))
+                .Select(s => s.Code)
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToList();
+            // 场内 ETF/LOF 统一归一化为 SH/SZ 前缀，才能被行情接口识别（FD513310 → SH513310）
+            var stockCodes = _stocks
+                .Where(s => !s.IsFund && !string.IsNullOrEmpty(s.Code))
+                .Select(s => s.IsExchangeFund ? StockItem.ToExchangeCode(s.Code) : s.Code)
                 .Distinct(StringComparer.OrdinalIgnoreCase)
                 .ToList();
             var indexCodes = _indices.Select(i => i.Code)
@@ -52,7 +59,7 @@ public class QuoteService
                 .Distinct(StringComparer.OrdinalIgnoreCase)
                 .ToList();
 
-            if (stockCodes.Count == 0 && indexCodes.Count == 0) return;
+            if (stockCodes.Count == 0 && indexCodes.Count == 0 && fundCodes.Count == 0) return;
 
             // A 股指数走腾讯/新浪（GetBatchQuotesAsync）；IX 全球指数走东财 push2
             var domesticIndexCodes = indexCodes
@@ -73,11 +80,16 @@ public class QuoteService
             Task<List<QuoteItem>> globalTask = globalIndexCodes.Count > 0
                 ? _client.GetPush2QuotesAsync(globalIndexCodes)
                 : Task.FromResult(new List<QuoteItem>());
+            Task<List<QuoteItem>> fundTask = fundCodes.Count > 0
+                ? _client.GetFundValuationsAsync(fundCodes)
+                : Task.FromResult(new List<QuoteItem>());
 
             List<QuoteItem> batchResults = [];
             List<QuoteItem> globalResults = [];
+            List<QuoteItem> fundResults = [];
             try { batchResults = await batchTask; } catch { /* keep last */ }
             try { globalResults = await globalTask; } catch { /* keep last */ }
+            try { fundResults = await fundTask; } catch { /* keep last */ }
 
             var quoteMap = BuildQuoteMap(batchResults);
             foreach (var r in globalResults)
@@ -95,6 +107,14 @@ public class QuoteService
                 quoteMap[$"{r.F13}.{r.F12}"] = r;
             }
 
+            var fundMap = new Dictionary<string, QuoteItem>(StringComparer.OrdinalIgnoreCase);
+            foreach (var r in fundResults)
+            {
+                if (string.IsNullOrEmpty(r.F12)) continue;
+                fundMap[r.F12] = r;
+                fundMap[EastMoneyClient.ToFundInternalCode(r.F12)] = r;
+            }
+
             var dispatcher = Application.Current?.Dispatcher;
             if (dispatcher == null) return;
 
@@ -102,6 +122,20 @@ public class QuoteService
             {
                 foreach (var stock in _stocks)
                 {
+                    if (stock.IsFund)
+                    {
+                        if (!fundMap.TryGetValue(stock.Code, out var fundQuote)
+                            && !fundMap.TryGetValue(stock.CodeNumeric, out fundQuote))
+                            continue;
+
+                        if (!string.IsNullOrEmpty(fundQuote.F14))
+                            stock.Name = fundQuote.F14;
+                        stock.CurrentPrice = fundQuote.F2;
+                        stock.ChangePercent = fundQuote.F3;
+                        stock.YesterdayClose = fundQuote.F17;
+                        continue;
+                    }
+
                     if (!TryGetQuote(quoteMap, stock.Code, stock.CodeNumeric, out var quote))
                         continue;
 

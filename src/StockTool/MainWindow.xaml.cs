@@ -4,7 +4,6 @@ using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
 using System.Windows.Media;
-using System.Windows.Media.Animation;
 using System.Windows.Media.Imaging;
 using StockTool.Core.Models;
 using StockTool.Data;
@@ -33,6 +32,8 @@ public partial class MainWindow : Window
         DataContext = viewModel;
         InitializeComponent();
         ApplyAppIcon();
+        DetailSheet.Initialize(_client);
+        DetailSheet.SuppressListInputChanged += OnDetailSheetSuppressListInput;
         Loaded += (_, _) => SyncHeaderPadding();
 
         // restore saved position
@@ -58,7 +59,7 @@ public partial class MainWindow : Window
 
     private void BtnAdd_Click(object sender, RoutedEventArgs e)
     {
-        var dialog = new AddStockDialog(_client) { Owner = this };
+        var dialog = new AddStockDialog(_client, VM.IsFundGroup) { Owner = this };
         if (dialog.ShowDialog() == true
             && !string.IsNullOrEmpty(dialog.SelectedInternalCode)
             && !string.IsNullOrEmpty(dialog.SelectedName))
@@ -112,8 +113,14 @@ public partial class MainWindow : Window
 
     private void BtnClose_Click(object sender, RoutedEventArgs e)
     {
+        Hide();
+    }
+
+    // 托盘退出时真正关闭窗口
+    public void CloseForExit()
+    {
         _isReallyClosing = true;
-        Application.Current.Shutdown();
+        Close();
     }
 
     private void Window_Closing(object sender, System.ComponentModel.CancelEventArgs e)
@@ -356,144 +363,18 @@ public partial class MainWindow : Window
         // Toggle: click same stock closes the panel
         if (VM.SelectedStock == stock)
         {
-            VM.SelectedStock = null;
+            DetailSheet.Close();
             return;
         }
 
         VM.SelectedStock = stock;
-        await LoadDetailChartAsync(stock);
-        AnimateSheetSlideUp(fromOffset: 72);
+        await DetailSheet.ShowAsync(stock);
     }
 
-    private void BtnExpandDetail_Click(object sender, RoutedEventArgs e)
+    private void OnDetailSheetSuppressListInput(bool suppress)
     {
-        bool expanding = !VM.IsChartExpanded;
-        VM.IsChartExpanded = expanding;
-        if (expanding)
-            AnimateSheetSlideUp(fromOffset: 72);
-        e.Handled = true;
-    }
-
-    private void BtnCollapseDetail_Click(object sender, RoutedEventArgs e)
-    {
-        if (VM.IsChartExpanded)
-        {
-            VM.IsChartExpanded = false;
-            e.Handled = true;
-            return;
-        }
-        CloseDetailSheet();
-        e.Handled = true;
-    }
-
-    private void BtnCloseDetail_Click(object sender, RoutedEventArgs e)
-    {
-        CloseDetailSheet();
-    }
-
-    private void AnimateSheetSlideUp(double fromOffset)
-    {
-        if (DetailSheetTransform == null) return;
-
-        var anim = new DoubleAnimation
-        {
-            From = fromOffset,
-            To = 0,
-            Duration = TimeSpan.FromMilliseconds(280),
-            EasingFunction = new QuadraticEase { EasingMode = EasingMode.EaseOut }
-        };
-        DetailSheetTransform.BeginAnimation(TranslateTransform.YProperty, anim);
-    }
-
-    private void DetailMask_PreviewMouseLeftButtonDown(object sender, MouseButtonEventArgs e)
-    {
-        // 按下即吞掉事件并清拖拽，松手再收起，避免遮罩消失后点击穿透到列表
-        _suppressListInput = true;
-        _draggedItem = null;
-        e.Handled = true;
-    }
-
-    private void DetailMask_MouseLeftButtonUp(object sender, MouseButtonEventArgs e)
-    {
-        CloseDetailSheet();
-        e.Handled = true;
-        // 下一帧再恢复列表输入，确保本次 Up 不会落到股票行
-        Dispatcher.BeginInvoke(() => _suppressListInput = false);
-    }
-
-    private void DetailSheet_MouseLeftButtonDown(object sender, MouseButtonEventArgs e)
-    {
-        // Prevent clicks on the sheet from closing via the mask
-        e.Handled = true;
-    }
-
-    private void CloseDetailSheet()
-    {
-        _draggedItem = null;
-        VM.IsChartExpanded = false;
-        VM.SelectedStock = null;
-    }
-
-    private async Task LoadDetailChartAsync(StockItem stock)
-    {
-        if (stock.KlinePeriod == 0)
-        {
-            if (stock.IntradayPoints.Count == 0)
-                await LoadIntradayAsync(stock);
-            return;
-        }
-
-        if (stock.KlineData.Count == 0)
-            await LoadKlineAsync(stock);
-    }
-
-    private async Task LoadIntradayAsync(StockItem stock)
-    {
-        try
-        {
-            var series = await _client.GetIntradayAsync(stock.Code);
-            if (series != null && series.Prices.Count > 0)
-            {
-                stock.IntradayPoints = series.Prices;
-                stock.IntradayAvgPoints = series.AvgPrices;
-            }
-        }
-        catch { }
-    }
-
-    private async Task LoadKlineAsync(StockItem stock)
-    {
-        try
-        {
-            var data = await _client.GetKlineAsync(stock.Code, stock.KlinePeriod);
-            if (data.Count > 0)
-                stock.KlineData = data;
-        }
-        catch { }
-    }
-
-    private async void KlinePeriod_Click(object sender, RoutedEventArgs e)
-    {
-        if (sender is not FrameworkElement fe) return;
-        if (fe.Tag is not string periodStr) return;
-
-        var stock = VM.SelectedStock;
-        if (stock == null) return;
-
-        int period = int.Parse(periodStr);
-        if (stock.KlinePeriod == period) return;
-
-        stock.KlinePeriod = period;
-
-        if (period == 0)
-        {
-            await LoadIntradayAsync(stock);
-            return;
-        }
-
-        // 切换周期始终重新拉取，避免沿用空缓存
-        stock.KlineData = [];
-        await LoadKlineAsync(stock);
+        _suppressListInput = suppress;
+        if (suppress) _draggedItem = null;
     }
 
     private StockItem? FindStockItemAtMouse(RoutedEventArgs e)
@@ -532,6 +413,12 @@ public partial class MainWindow : Window
             headerMetaText.Text = $"{stock.CodeNumeric} · {stock.Market}";
 
         RebuildGroupSubMenu(menu, stock);
+
+        var removeFromGroup = FindVisualChild<MenuItem>(menu, "RemoveFromGroupMenuItem");
+        if (removeFromGroup != null)
+            removeFromGroup.Visibility = VM.SelectedGroupId == MainViewModel.HoldingGroupId
+                ? Visibility.Collapsed
+                : Visibility.Visible;
     }
 
     private void RebuildGroupSubMenu(ContextMenu menu, StockItem stock)
@@ -540,7 +427,9 @@ public partial class MainWindow : Window
         if (groupSubMenu == null) return;
 
         groupSubMenu.Items.Clear();
-        foreach (var group in VM.Groups.Where(g => g.Id != stock.GroupId))
+        foreach (var group in VM.Groups.Where(g =>
+                     g.Id != MainViewModel.HoldingGroupId
+                     && !VM.HasStockInGroup(stock.Code, g.Id)))
         {
             var item = new MenuItem
             {

@@ -1,4 +1,4 @@
-namespace StockTool.Services;
+﻿namespace StockTool.Services;
 
 public static class TradingHours
 {
@@ -22,7 +22,7 @@ public static class TradingHours
 
         var t = now.TimeOfDay;
 
-        if (market is "沪A" or "深A" or "ETF")
+        if (market is "沪A" or "深A" or "ETF" or "基金")
             return (t >= AmOpenA && t <= AmCloseA) || (t >= PmOpenA && t <= PmCloseA);
 
         if (market == "港股")

@@ -1,4 +1,4 @@
-<Window x:Class="StockTool.Views.AddStockDialog"
+﻿<Window x:Class="StockTool.Views.AddStockDialog"
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         WindowStyle="None"
@@ -26,7 +26,7 @@
             </Grid.RowDefinitions>
 
             <!-- Title -->
-            <TextBlock Grid.Row="0" Text="添加自选"
+            <TextBlock x:Name="TxtTitle" Grid.Row="0" Text="添加自选"
                        Foreground="#1A1A1A"
                        FontSize="16"
                        FontWeight="SemiBold"

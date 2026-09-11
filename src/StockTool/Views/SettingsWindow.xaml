@@ -225,6 +225,7 @@
                       FontSize="13"
                       Margin="0,0,0,14" />
 
+            <!-- 首页指数排序区块已从设置页移除（保留原代码备查）
             <TextBlock Text="首页指数排序"
                        Foreground="#27364A"
                        FontSize="13"
@@ -277,6 +278,7 @@
                     </DataTemplate>
                 </ItemsControl.ItemTemplate>
             </ItemsControl>
+            -->
 
             <!-- Buttons -->
             <Grid>

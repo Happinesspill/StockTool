@@ -79,11 +79,18 @@ public class EastMoneyClient
     public Task<List<QuoteItem>> GetPush2QuotesAsync(IReadOnlyList<string> internalCodes)
         => GetEastMoneyQuotesAsync(internalCodes);
 
+    public static bool IsFundCode(string internalCode)
+        => internalCode.StartsWith("FD", StringComparison.OrdinalIgnoreCase);
+
+    public static string ToFundInternalCode(string fundCode)
+        => $"FD{fundCode.Trim()}";
+
     public static string MarketLabelFromPrefix(string prefix) => prefix switch
     {
         "SH" => "沪A",
         "SZ" => "深A",
         "HK" => "港股",
+        "FD" => "基金",
         _ => prefix
     };
 
@@ -91,6 +98,9 @@ public class EastMoneyClient
 
     public async Task<List<QuoteItem>> GetBatchQuotesAsync(IReadOnlyList<string> internalCodes)
     {
+        if (internalCodes.Count == 0) return [];
+
+        internalCodes = internalCodes.Where(c => !IsFundCode(c)).ToList();
         if (internalCodes.Count == 0) return [];
 
         // 港股/全球指数：东财 push2；A 股/ETF：腾讯/新浪竞速，东财兜底
@@ -376,7 +386,11 @@ public class EastMoneyClient
     // ── Intraday（腾讯分时）──────────────────────────
 
     public async Task<IntradaySeries?> GetIntradayAsync(string internalCode)
-        => await GetTencentIntradayAsync(internalCode);
+    {
+        // 场外基金无分时；场内 ETF/LOF 归一化为行情代码后走腾讯分时
+        if (IsFundCode(internalCode) && !StockItem.IsExchangeFundCode(internalCode)) return null;
+        return await GetTencentIntradayAsync(StockItem.ToExchangeCode(internalCode));
+    }
 
     private async Task<IntradaySeries?> GetTencentIntradayAsync(string internalCode)
     {
@@ -525,12 +539,116 @@ public class EastMoneyClient
         }
     }
 
+    // ── 天天基金搜索 ─────────────────────────────────
+
+    public async Task<List<SearchItem>> SearchFundsAsync(string keyword)
+    {
+        if (string.IsNullOrWhiteSpace(keyword)) return [];
+
+        string url = "https://fundsuggest.eastmoney.com/FundSearch/api/FundSearchAPI.ashx" +
+                     $"?m=1&key={Uri.EscapeDataString(keyword)}";
+
+        try
+        {
+            using var req = new HttpRequestMessage(HttpMethod.Get, url);
+            req.Headers.TryAddWithoutValidation("Referer", "https://fund.eastmoney.com/");
+            using var resp = await _http.SendAsync(req);
+            if (!resp.IsSuccessStatusCode) return [];
+
+            var response = await resp.Content.ReadFromJsonAsync<FundSearchResponse>(JsonOpts);
+            return (response?.Datas ?? [])
+                .Where(d => d.Category == 700 && !string.IsNullOrEmpty(d.Code) && !string.IsNullOrEmpty(d.Name))
+                .Take(10)
+                .Select(d => new SearchItem
+                {
+                    Code = d.Code,
+                    Name = d.Name,
+                    MarketType = "FD",
+                    SecurityTypeName = d.CategoryDesc ?? "基金"
+                })
+                .ToList();
+        }
+        catch
+        {
+            return [];
+        }
+    }
+
+    // ── 天天基金实时估值 ─────────────────────────────
+
+    public async Task<List<QuoteItem>> GetFundValuationsAsync(IReadOnlyList<string> internalCodes)
+    {
+        var codes = internalCodes
+            .Select(c => IsFundCode(c) ? c[2..] : c)
+            .Where(c => !string.IsNullOrWhiteSpace(c))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+        if (codes.Count == 0) return [];
+
+        string query = $"FCODES={Uri.EscapeDataString(string.Join(",", codes))}" +
+                       "&FIELDS=FCODE,SHORTNAME,GSZZL,GZTIME,GSZ,NAV,PDATE";
+        string[] urls =
+        [
+            $"https://fundcomapi.tiantianfunds.com/mm/newCore/FundValuationLast?{query}",
+            $"https://fundcomapi.eastmoney.com/mm/newCore/FundValuationLast?{query}"
+        ];
+
+        foreach (var url in urls)
+        {
+            var list = await FetchFundValuationAsync(url);
+            if (list.Count > 0) return list;
+        }
+
+        return [];
+    }
+
+    private async Task<List<QuoteItem>> FetchFundValuationAsync(string url)
+    {
+        try
+        {
+            using var req = new HttpRequestMessage(HttpMethod.Get, url);
+            req.Headers.TryAddWithoutValidation("Referer", "https://fund.eastmoney.com/");
+            using var resp = await _http.SendAsync(req);
+            if (!resp.IsSuccessStatusCode) return [];
+
+            var response = await resp.Content.ReadFromJsonAsync<FundValuationResponse>(JsonOpts);
+            if (response?.Data == null || response.Data.Count == 0) return [];
+
+            var result = new List<QuoteItem>(response.Data.Count);
+            foreach (var item in response.Data)
+            {
+                if (string.IsNullOrEmpty(item.FCODE)) continue;
+                decimal price = item.GSZ > 0 ? item.GSZ : item.NAV;
+                decimal pct = item.GSZ > 0 ? item.GSZZL : 0;
+                result.Add(new QuoteItem
+                {
+                    F2 = price,
+                    F3 = pct,
+                    F12 = item.FCODE,
+                    F14 = item.SHORTNAME,
+                    F17 = item.NAV
+                });
+            }
+            return result;
+        }
+        catch
+        {
+            return [];
+        }
+    }
+
     // ── K-line (Tencent API) ──────────────────────────
 
     private static string TencentPrefix(string internalCode) => internalCode[..2].ToLowerInvariant();
 
     public async Task<List<KlineItem>> GetKlineAsync(string internalCode, int period = 5, int count = 160)
     {
+        if (IsFundCode(internalCode))
+        {
+            // 场内 ETF/LOF 归一化为行情代码后仍取 K 线；场外基金没有 K 线
+            if (!StockItem.IsExchangeFundCode(internalCode)) return [];
+            internalCode = StockItem.ToExchangeCode(internalCode);
+        }
         // period: 5=m5, 15=m15, 30=m30, 60=m60, 101=day, 102=week
         string prefix = TencentPrefix(internalCode);
         string code = prefix + internalCode[2..];

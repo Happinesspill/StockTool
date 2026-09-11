@@ -1,4 +1,4 @@
-using System.Windows;
+﻿using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
 using StockTool.Core.Models;
@@ -9,6 +9,7 @@ namespace StockTool.Views;
 public partial class AddStockDialog : Window
 {
     private readonly EastMoneyClient _client;
+    private readonly bool _searchFunds;
     private CancellationTokenSource? _searchCts;
     private List<SearchResultItem> _results = [];
 
@@ -16,10 +17,17 @@ public partial class AddStockDialog : Window
     public string? SelectedName { get; private set; }
     public string? SelectedMarket { get; private set; }
 
-    public AddStockDialog(EastMoneyClient client)
+    public AddStockDialog(EastMoneyClient client, bool searchFunds = false)
     {
         InitializeComponent();
         _client = client;
+        _searchFunds = searchFunds;
+        if (_searchFunds)
+        {
+            TxtTitle.Text = "添加基金";
+            TxtPlaceholder.Text = "输入基金名称或代码搜索";
+            TxtSearch.ToolTip = "输入基金名称或代码搜索";
+        }
         TxtSearch.Focus();
     }
 
@@ -39,7 +47,7 @@ public partial class AddStockDialog : Window
             LstResults.ItemsSource = null;
             LstResults.Visibility = Visibility.Collapsed;
             TxtPlaceholder.Visibility = Visibility.Visible;
-            TxtPlaceholder.Text = "输入股票名称或代码搜索";
+            TxtPlaceholder.Text = _searchFunds ? "输入基金名称或代码搜索" : "输入股票名称或代码搜索";
             return;
         }
 
@@ -55,7 +63,9 @@ public partial class AddStockDialog : Window
 
         if (token.IsCancellationRequested) return;
 
-        var items = await _client.SearchAsync(keyword);
+        var items = _searchFunds
+            ? await _client.SearchFundsAsync(keyword)
+            : await _client.SearchAsync(keyword);
         if (token.IsCancellationRequested) return;
 
         _results = items
@@ -82,7 +92,7 @@ public partial class AddStockDialog : Window
             LstResults.ItemsSource = null;
             LstResults.Visibility = Visibility.Collapsed;
             TxtPlaceholder.Visibility = Visibility.Visible;
-            TxtPlaceholder.Text = "未找到匹配的股票";
+            TxtPlaceholder.Text = _searchFunds ? "未找到匹配的基金" : "未找到匹配的股票";
         }
         else
         {
@@ -165,6 +175,7 @@ public partial class AddStockDialog : Window
             "SH" or "sh" => "SH",
             "SZ" or "sz" => "SZ",
             "HK" or "hk" => "HK",
+            "FD" or "fd" => "FD",
             // Numeric market codes
             "1" or "01" => "SH",
             "0" or "00" or "2" or "02" => "SZ",

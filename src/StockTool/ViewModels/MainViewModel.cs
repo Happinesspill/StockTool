@@ -11,6 +11,10 @@ namespace StockTool.ViewModels;
 public class MainViewModel : INotifyPropertyChanged
 {
     public const string DefaultGroupName = "自选";
+    public const string FundGroupName = "基金";
+    public const string HoldingGroupName = WatchlistGroup.HoldingGroupName;
+    public const string HoldingGroupId = WatchlistGroup.HoldingGroupId;
+    public const int FixedGroupCount = 2;
 
     private readonly ConfigStore _configStore;
     private readonly QuoteService _quoteService;
@@ -32,6 +36,20 @@ public class MainViewModel : INotifyPropertyChanged
     public string HoldingMarketValueText => FormatMoney(HoldingMarketValue);
     public string HoldingProfitTotalText => $"{HoldingProfitTotal:+0.##;-0.##;0.##}";
     public string HoldingTodayProfitText => $"{HoldingTodayProfit:+0.##;-0.##;0.##}";
+
+    // 今日盈亏悬浮明细：各持仓股今日盈亏与涨跌幅
+    public string HoldingTodayProfitTooltip
+    {
+        get
+        {
+            var holdings = Stocks.Where(s => s.HasHolding).ToList();
+            if (holdings.Count == 0) return "暂无持仓";
+
+            return string.Join(Environment.NewLine, holdings.Select(s =>
+                $"{s.DisplayName}  {s.TodayHoldingProfit:+0.##;-0.##;0.##}  {s.ChangePercent:+0.00;-0.00;0.00}%"));
+        }
+    }
+
     public int AlertCount => _config.AlertRules.Count(r => r.Enabled);
 
     public double WindowLeft
@@ -119,12 +137,36 @@ public class MainViewModel : INotifyPropertyChanged
             _configStore.Save(_config);
             OnPropertyChanged();
             OnPropertyChanged(nameof(SelectedGroupName));
+            OnPropertyChanged(nameof(ShowHoldingColumn));
+            OnPropertyChanged(nameof(ShowTrendColumn));
+            OnPropertyChanged(nameof(IsFundGroup));
+            OnPropertyChanged(nameof(EmptyListHint));
+            OnPropertyChanged(nameof(PriceColumnHeader));
+            OnPropertyChanged(nameof(StatusSourceText));
+            if (!ShowHoldingColumn && string.Equals(SortColumn, "profit", StringComparison.OrdinalIgnoreCase))
+            {
+                SortColumn = "default";
+                SortDescending = true;
+            }
             RefreshVisibleStocks();
         }
     }
 
     public string SelectedGroupName =>
         Groups.FirstOrDefault(g => g.Id == SelectedGroupId)?.Name ?? DefaultGroupName;
+
+    public bool ShowHoldingColumn => SelectedGroupId == HoldingGroupId || IsFundGroup;
+
+    // 基金无可用盘中估值走势数据时不展示趋势列
+    public bool ShowTrendColumn => !IsFundGroup;
+
+    public bool IsFundGroup => SelectedGroupName == FundGroupName;
+
+    public string EmptyListHint => IsFundGroup ? "当前分组暂无基金" : "当前分组暂无股票";
+
+    public string PriceColumnHeader => IsFundGroup ? "估值/涨幅" : "现价/涨幅";
+
+    public string StatusSourceText => IsFundGroup ? "数据来源：天天基金 | 仅供参考" : "数据来源：东方财富 | 仅供参考";
 
     public string SortMode
     {
@@ -222,9 +264,7 @@ public class MainViewModel : INotifyPropertyChanged
         _configStore = configStore;
         _config = _configStore.Load();
         _config.EnsureGroupsMigrated();
-
-        foreach (var g in _config.Groups)
-            Groups.Add(g);
+        RebuildGroupsCollection();
 
         _config.EnsureHomeIndicesMigrated();
         RebuildIndices();
@@ -241,7 +281,9 @@ public class MainViewModel : INotifyPropertyChanged
 
         if (_config.Watchlist.Count == 0)
         {
-            _config.Watchlist = GetDefaultWatchlist(_config.SelectedGroupId);
+            _config.Watchlist = GetDefaultWatchlist(_config.SelectedGroupId == HoldingGroupId
+                ? Groups.First(g => g.Name == DefaultGroupName).Id
+                : _config.SelectedGroupId);
             _configStore.Save(_config);
         }
 
@@ -269,12 +311,103 @@ public class MainViewModel : INotifyPropertyChanged
         UpdateTimers();
     }
 
+    // 构建展示用分组：自选、持仓（虚拟）、其余
+    private void RebuildGroupsCollection()
+    {
+        Groups.Clear();
+        var zixuan = _config.Groups.FirstOrDefault(g => g.Name == DefaultGroupName) ?? _config.Groups[0];
+        int zixuanIndex = _config.Groups.IndexOf(zixuan);
+        if (zixuanIndex > 0)
+        {
+            _config.Groups.RemoveAt(zixuanIndex);
+            _config.Groups.Insert(0, zixuan);
+        }
+
+        Groups.Add(zixuan);
+        Groups.Add(new WatchlistGroup { Id = HoldingGroupId, Name = HoldingGroupName });
+        foreach (var g in _config.Groups)
+        {
+            if (g.Id == zixuan.Id) continue;
+            Groups.Add(g);
+        }
+    }
+
+    private ManageGroupsSnapshot? _manageSnapshot;
+
+    // 打开管理页时记录快照，供取消回滚
+    public void BeginManageGroupsEdit()
+    {
+        _manageSnapshot = new ManageGroupsSnapshot
+        {
+            HomeIndexCodes = _config.HomeIndexCodes.ToList(),
+            Groups = _config.Groups.Select(g => new WatchlistGroup { Id = g.Id, Name = g.Name }).ToList(),
+            WatchlistGroupIds = _config.Watchlist.Select(e => e.GroupId).ToList(),
+            SelectedGroupId = _config.SelectedGroupId
+        };
+    }
+
+    public void CommitManageGroupsEdit()
+    {
+        _manageSnapshot = null;
+        _configStore.Save(_config);
+    }
+
+    public void CancelManageGroupsEdit()
+    {
+        if (_manageSnapshot == null) return;
+        var snap = _manageSnapshot;
+        _manageSnapshot = null;
+
+        _config.HomeIndexCodes = snap.HomeIndexCodes.ToList();
+        _config.Groups = snap.Groups
+            .Select(g => new WatchlistGroup { Id = g.Id, Name = g.Name })
+            .ToList();
+
+        int count = Math.Min(_config.Watchlist.Count, snap.WatchlistGroupIds.Count);
+        for (int i = 0; i < count; i++)
+        {
+            _config.Watchlist[i].GroupId = snap.WatchlistGroupIds[i];
+            if (i < Stocks.Count)
+                Stocks[i].GroupId = snap.WatchlistGroupIds[i];
+        }
+
+        RebuildGroupsCollection();
+
+        string selected = snap.SelectedGroupId;
+        if (selected != HoldingGroupId && _config.Groups.All(g => g.Id != selected))
+            selected = _config.Groups[0].Id;
+        _config.SelectedGroupId = selected;
+
+        RebuildIndices();
+        RebuildIndexOptions();
+        RefreshVisibleStocks();
+        OnPropertyChanged(nameof(SelectedGroupId));
+        OnPropertyChanged(nameof(SelectedGroupName));
+        OnPropertyChanged(nameof(ShowHoldingColumn));
+        OnPropertyChanged(nameof(ShowTrendColumn));
+        OnPropertyChanged(nameof(IsFundGroup));
+        OnPropertyChanged(nameof(EmptyListHint));
+        OnPropertyChanged(nameof(PriceColumnHeader));
+        OnPropertyChanged(nameof(StatusSourceText));
+        _configStore.Save(_config);
+        _ = _quoteService.RefreshNowAsync();
+    }
+
+    private sealed class ManageGroupsSnapshot
+    {
+        public List<string> HomeIndexCodes { get; init; } = [];
+        public List<WatchlistGroup> Groups { get; init; } = [];
+        public List<string> WatchlistGroupIds { get; init; } = [];
+        public string SelectedGroupId { get; init; } = string.Empty;
+    }
+
     private void OnQuotesUpdated()
     {
         EvaluateAlerts();
         OnPropertyChanged(nameof(HoldingMarketValueText));
         OnPropertyChanged(nameof(HoldingProfitTotalText));
         OnPropertyChanged(nameof(HoldingTodayProfitText));
+        OnPropertyChanged(nameof(HoldingTodayProfitTooltip));
         if (SortColumn != "default")
             RefreshVisibleStocks();
     }
@@ -400,9 +533,29 @@ public class MainViewModel : INotifyPropertyChanged
         _ = _quoteService.RefreshNowAsync();
     }
 
+    // 拖拽调整首页指数顺序
+    public void ReorderHomeIndex(int fromIndex, int toIndex)
+    {
+        if (fromIndex < 0 || fromIndex >= _config.HomeIndexCodes.Count) return;
+        if (toIndex < 0 || toIndex >= _config.HomeIndexCodes.Count) return;
+        if (fromIndex == toIndex) return;
+
+        var code = _config.HomeIndexCodes[fromIndex];
+        _config.HomeIndexCodes.RemoveAt(fromIndex);
+        _config.HomeIndexCodes.Insert(toIndex, code);
+        _configStore.Save(_config);
+        RebuildIndices();
+        RebuildIndexOptions();
+        _ = _quoteService.RefreshNowAsync();
+    }
+
     public void RefreshVisibleStocks()
     {
-        var filtered = Stocks.Where(s => s.GroupId == SelectedGroupId).ToList();
+        List<StockItem> filtered;
+        if (SelectedGroupId == HoldingGroupId)
+            filtered = Stocks.Where(s => s.HasHolding).ToList();
+        else
+            filtered = Stocks.Where(s => s.GroupId == SelectedGroupId).ToList();
         filtered = ApplySort(filtered).ToList();
 
         VisibleStocks.Clear();
@@ -411,6 +564,12 @@ public class MainViewModel : INotifyPropertyChanged
 
         OnPropertyChanged(nameof(VisibleStocks));
     }
+
+    public static bool IsFixedGroup(WatchlistGroup group) =>
+        group.Id == HoldingGroupId || group.Name == DefaultGroupName;
+
+    public static bool IsHoldingGroup(string groupId) =>
+        groupId == HoldingGroupId;
 
     public void SelectGroup(string groupId)
     {
@@ -471,6 +630,7 @@ public class MainViewModel : INotifyPropertyChanged
     {
         name = name.Trim();
         if (string.IsNullOrEmpty(name)) return null;
+        if (string.Equals(name, HoldingGroupName, StringComparison.OrdinalIgnoreCase)) return null;
         if (Groups.Any(g => string.Equals(g.Name, name, StringComparison.OrdinalIgnoreCase)))
             return null;
 
@@ -486,6 +646,8 @@ public class MainViewModel : INotifyPropertyChanged
     {
         newName = newName.Trim();
         if (string.IsNullOrEmpty(newName)) return false;
+        if (groupId == HoldingGroupId) return false;
+        if (string.Equals(newName, HoldingGroupName, StringComparison.OrdinalIgnoreCase)) return false;
         var group = Groups.FirstOrDefault(g => g.Id == groupId);
         if (group == null) return false;
         if (Groups.Any(g => g.Id != groupId && string.Equals(g.Name, newName, StringComparison.OrdinalIgnoreCase)))
@@ -497,30 +659,33 @@ public class MainViewModel : INotifyPropertyChanged
         return true;
     }
 
-    // 拖拽调整分组顺序
+    // 拖拽调整分组顺序（自选、持仓固定前两位）
     public void MoveGroup(int fromIndex, int toIndex)
     {
-        if (fromIndex < 0 || fromIndex >= Groups.Count) return;
-        if (toIndex < 0 || toIndex >= Groups.Count) return;
+        if (fromIndex < FixedGroupCount || toIndex < FixedGroupCount) return;
+        if (fromIndex >= Groups.Count || toIndex >= Groups.Count) return;
         if (fromIndex == toIndex) return;
 
         Groups.Move(fromIndex, toIndex);
-        var item = _config.Groups[fromIndex];
-        _config.Groups.RemoveAt(fromIndex);
-        _config.Groups.Insert(toIndex, item);
+        int cfgFrom = fromIndex - 1;
+        int cfgTo = toIndex - 1;
+        var item = _config.Groups[cfgFrom];
+        _config.Groups.RemoveAt(cfgFrom);
+        _config.Groups.Insert(cfgTo, item);
         _configStore.Save(_config);
     }
 
     public bool DeleteGroup(string groupId)
     {
-        if (Groups.Count <= 1) return false;
+        if (groupId == HoldingGroupId) return false;
         var group = Groups.FirstOrDefault(g => g.Id == groupId);
         if (group == null) return false;
 
         // 「自选」不可删
         if (group.Name == DefaultGroupName) return false;
 
-        var fallback = Groups.FirstOrDefault(g => g.Name == DefaultGroupName) ?? Groups.First(g => g.Id != groupId);
+        var fallback = Groups.FirstOrDefault(g => g.Name == DefaultGroupName)
+            ?? Groups.First(g => g.Id != groupId && g.Id != HoldingGroupId);
 
         foreach (var stock in Stocks.Where(s => s.GroupId == groupId))
             stock.GroupId = fallback.Id;
@@ -542,8 +707,10 @@ public class MainViewModel : INotifyPropertyChanged
     public void AddStock(string code, string name, string market)
     {
         string groupId = SelectedGroupId;
-        if (string.IsNullOrEmpty(groupId) && Groups.Count > 0)
-            groupId = Groups[0].Id;
+        if (groupId == HoldingGroupId || string.IsNullOrEmpty(groupId))
+            groupId = Groups.FirstOrDefault(g => g.Name == DefaultGroupName)?.Id
+                ?? Groups.FirstOrDefault(g => g.Id != HoldingGroupId)?.Id
+                ?? string.Empty;
 
         var entry = new WatchlistEntry
         {
@@ -612,6 +779,12 @@ public class MainViewModel : INotifyPropertyChanged
             _config.Watchlist[cfgIndex].HoldingCost = cost;
             _configStore.Save(_config);
         }
+
+        OnPropertyChanged(nameof(HoldingMarketValueText));
+        OnPropertyChanged(nameof(HoldingProfitTotalText));
+        OnPropertyChanged(nameof(HoldingTodayProfitText));
+        OnPropertyChanged(nameof(HoldingTodayProfitTooltip));
+        RefreshVisibleStocks();
     }
 
     public void MoveStockUp(StockItem stock)
@@ -648,7 +821,15 @@ public class MainViewModel : INotifyPropertyChanged
 
     public bool MoveStockToGroup(StockItem stock, string groupId)
     {
-        if (string.IsNullOrEmpty(groupId) || Groups.All(g => g.Id != groupId)) return false;
+        if (string.IsNullOrEmpty(groupId) || groupId == HoldingGroupId) return false;
+        if (Groups.All(g => g.Id != groupId)) return false;
+        if (HasStockInGroup(stock.Code, groupId)) return false;
+
+        // 自选中加入其他分组：复制一份，保留自选中的原条目
+        string? zixuanId = Groups.FirstOrDefault(g => g.Name == DefaultGroupName)?.Id;
+        if (!string.IsNullOrEmpty(zixuanId) && stock.GroupId == zixuanId)
+            return CopyStockToGroup(stock, groupId);
+
         int index = Stocks.IndexOf(stock);
         if (index < 0 || stock.GroupId == groupId) return false;
 
@@ -662,10 +843,50 @@ public class MainViewModel : INotifyPropertyChanged
         return true;
     }
 
+    // 复制股票到目标分组（自选保留原条目）
+    public bool CopyStockToGroup(StockItem stock, string groupId)
+    {
+        if (string.IsNullOrEmpty(groupId) || groupId == HoldingGroupId) return false;
+        if (Groups.All(g => g.Id != groupId)) return false;
+        if (HasStockInGroup(stock.Code, groupId)) return false;
+
+        _config.Watchlist.Add(new WatchlistEntry
+        {
+            Code = stock.Code,
+            Name = stock.Name,
+            Market = stock.Market,
+            CustomName = stock.CustomName,
+            GroupId = groupId,
+            HoldingShares = stock.HoldingShares,
+            HoldingCost = stock.HoldingCost
+        });
+        Stocks.Add(new StockItem
+        {
+            Name = stock.Name,
+            Code = stock.Code,
+            Market = stock.Market,
+            CustomName = stock.CustomName,
+            GroupId = groupId,
+            HoldingShares = stock.HoldingShares,
+            HoldingCost = stock.HoldingCost,
+            CurrentPrice = stock.CurrentPrice,
+            ChangePercent = stock.ChangePercent,
+            YesterdayClose = stock.YesterdayClose
+        });
+        _configStore.Save(_config);
+        _ = _intradayService.LoadAllAsync();
+        return true;
+    }
+
+    public bool HasStockInGroup(string code, string groupId) =>
+        Stocks.Any(s => s.GroupId == groupId
+            && s.Code.Equals(code, StringComparison.OrdinalIgnoreCase));
+
     public bool RemoveStockFromCurrentGroup(StockItem stock)
     {
-        if (Groups.Count <= 1) return false;
-        var target = Groups.FirstOrDefault(g => g.Id != stock.GroupId);
+        if (SelectedGroupId == HoldingGroupId) return false;
+        var target = Groups.FirstOrDefault(g =>
+            g.Id != stock.GroupId && g.Id != HoldingGroupId);
         if (target == null) return false;
         return MoveStockToGroup(stock, target.Id);
     }

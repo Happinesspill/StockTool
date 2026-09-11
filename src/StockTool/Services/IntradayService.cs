@@ -31,10 +31,15 @@ public class IntradayService
 
     private async Task RefreshAllAsync()
     {
-        var codes = _stocks.Select(s => s.Code).ToList();
+        // 场内 ETF/LOF 先归一化为行情代码（FD513310 → SH513310）再取分时
+        var targets = _stocks
+            .Select(s => (Stock: s, Code: s.IsExchangeFund ? StockItem.ToExchangeCode(s.Code) : s.Code))
+            .ToList();
 
-        foreach (var code in codes)
+        foreach (var (stock, code) in targets)
         {
+            if (EastMoneyClient.IsFundCode(code)) continue;   // 场外基金无分时
+
             IntradaySeries? series;
             try
             {
@@ -49,8 +54,6 @@ public class IntradayService
 
             await Application.Current.Dispatcher.InvokeAsync(() =>
             {
-                var stock = _stocks.FirstOrDefault(s => s.Code == code);
-                if (stock == null) return;
                 stock.IntradayPoints = series.Prices;
                 stock.IntradayAvgPoints = series.AvgPrices;
             });

@@ -362,3 +362,5 @@ MigrationBackup/
 # Fody - auto-generated XML schema
 FodyWeavers.xsd
 /EdgeExtensions/2.6.1.0_0
+.bitfun/
+.openbitfun/

@@ -1,5 +1,6 @@
 ﻿using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Data;
 using System.Windows.Input;
 using System.Windows.Media;
 using StockTool.Core.Models;
@@ -12,24 +13,132 @@ public partial class ManageGroupsWindow : Window
     private readonly MainViewModel _vm;
     private Point _dragStart;
     private WatchlistGroup? _draggedGroup;
+    private IndexItem? _draggedIndex;
+    private bool _committed;
 
     public ManageGroupsWindow(MainViewModel vm)
     {
         _vm = vm;
         DataContext = _vm;
         InitializeComponent();
-        GroupList.ItemsSource = _vm.Groups;
+        // 管理页只展示可编辑分组，不含自选、持仓
+        GroupList.ItemsSource = new ListCollectionView(_vm.Groups)
+        {
+            Filter = o => o is WatchlistGroup g && !MainViewModel.IsFixedGroup(g)
+        };
+        _vm.BeginManageGroupsEdit();
+        Closing += (_, _) =>
+        {
+            if (!_committed)
+                _vm.CancelManageGroupsEdit();
+        };
     }
 
     private void Window_MouseLeftButtonDown(object sender, MouseButtonEventArgs e)
     {
         if (e.ChangedButton != MouseButton.Left) return;
-        // 分组列表内拖拽排序时不移动窗口
-        if (FindAncestor<ListBox>(e.OriginalSource as DependencyObject) == GroupList) return;
+        // 分组/指数卡片内拖拽排序时不移动窗口
+        var source = e.OriginalSource as DependencyObject;
+        if (FindAncestor<ListBox>(source) is ListBox list &&
+            (list == GroupList || list == IndexCardList))
+            return;
         DragMove();
     }
 
-    private void BtnClose_Click(object sender, RoutedEventArgs e) => Close();
+    private void BtnSave_Click(object sender, RoutedEventArgs e)
+    {
+        _committed = true;
+        _vm.CommitManageGroupsEdit();
+        Close();
+    }
+
+    private void BtnCancel_Click(object sender, RoutedEventArgs e) => Close();
+
+    private void BtnAddGroup_Click(object sender, RoutedEventArgs e)
+    {
+        string? name = PromptText("新建分组", "");
+        if (name == null) return;
+        if (_vm.AddGroup(name) == null)
+            MessageBox.Show(this, "创建失败（名称无效或已存在）", "提示", MessageBoxButton.OK, MessageBoxImage.Information);
+    }
+
+    private void IndexCardList_PreviewMouseLeftButtonDown(object sender, MouseButtonEventArgs e)
+    {
+        if (FindAncestor<Button>(e.OriginalSource as DependencyObject) != null)
+        {
+            _draggedIndex = null;
+            return;
+        }
+
+        _dragStart = e.GetPosition(null);
+        _draggedIndex = FindIndexAtMouse(e);
+    }
+
+    private void IndexCardList_PreviewMouseMove(object sender, MouseEventArgs e)
+    {
+        if (_draggedIndex == null || e.LeftButton != MouseButtonState.Pressed) return;
+
+        var pos = e.GetPosition(null);
+        if (Math.Abs(pos.X - _dragStart.X) > SystemParameters.MinimumHorizontalDragDistance ||
+            Math.Abs(pos.Y - _dragStart.Y) > SystemParameters.MinimumVerticalDragDistance)
+        {
+            var item = _draggedIndex;
+            _draggedIndex = null;
+            DragDrop.DoDragDrop(IndexCardList, item, DragDropEffects.Move);
+        }
+    }
+
+    private void IndexCardList_DragOver(object sender, DragEventArgs e)
+    {
+        if (!e.Data.GetDataPresent(typeof(IndexItem)))
+        {
+            e.Effects = DragDropEffects.None;
+            e.Handled = true;
+            return;
+        }
+        e.Effects = DragDropEffects.Move;
+        e.Handled = true;
+    }
+
+    private void IndexCardList_Drop(object sender, DragEventArgs e)
+    {
+        if (!e.Data.GetDataPresent(typeof(IndexItem))) return;
+        var dragged = e.Data.GetData(typeof(IndexItem)) as IndexItem;
+        if (dragged == null) return;
+
+        var target = FindIndexAtMouse(e);
+        if (target == null || target == dragged) return;
+
+        int oldIndex = _vm.SelectedHomeIndices.IndexOf(dragged);
+        int newIndex = _vm.SelectedHomeIndices.IndexOf(target);
+        _vm.ReorderHomeIndex(oldIndex, newIndex);
+    }
+
+    private void IndexCardList_GiveFeedback(object sender, GiveFeedbackEventArgs e)
+    {
+        e.UseDefaultCursors = false;
+        e.Handled = true;
+    }
+
+    private IndexItem? FindIndexAtMouse(RoutedEventArgs e)
+    {
+        Point pos;
+        if (e is MouseEventArgs me)
+            pos = me.GetPosition(IndexCardList);
+        else if (e is DragEventArgs de)
+            pos = de.GetPosition(IndexCardList);
+        else
+            return null;
+
+        var element = IndexCardList.InputHitTest(pos) as DependencyObject;
+        while (element != null)
+        {
+            if (element is FrameworkElement fe && fe.DataContext is IndexItem item)
+                return item;
+            element = VisualTreeHelper.GetParent(element);
+        }
+        return null;
+    }
 
     private void GroupList_PreviewMouseLeftButtonDown(object sender, MouseButtonEventArgs e)
     {
@@ -41,7 +150,14 @@ public partial class ManageGroupsWindow : Window
         }
 
         _dragStart = e.GetPosition(null);
-        _draggedGroup = FindGroupAtMouse(e);
+        var group = FindGroupAtMouse(e);
+        // 自选、持仓固定，不可拖拽
+        if (group != null && IsPinnedGroup(group))
+        {
+            _draggedGroup = null;
+            return;
+        }
+        _draggedGroup = group;
     }
 
     private void GroupList_PreviewMouseMove(object sender, MouseEventArgs e)
@@ -66,6 +182,16 @@ public partial class ManageGroupsWindow : Window
             e.Handled = true;
             return;
         }
+
+        var dragged = e.Data.GetData(typeof(WatchlistGroup)) as WatchlistGroup;
+        var target = FindGroupAtMouse(e);
+        if (dragged == null || IsPinnedGroup(dragged) || (target != null && IsPinnedGroup(target)))
+        {
+            e.Effects = DragDropEffects.None;
+            e.Handled = true;
+            return;
+        }
+
         e.Effects = DragDropEffects.Move;
         e.Handled = true;
     }
@@ -74,14 +200,20 @@ public partial class ManageGroupsWindow : Window
     {
         if (!e.Data.GetDataPresent(typeof(WatchlistGroup))) return;
         var dragged = e.Data.GetData(typeof(WatchlistGroup)) as WatchlistGroup;
-        if (dragged == null) return;
+        if (dragged == null || IsPinnedGroup(dragged)) return;
 
         var target = FindGroupAtMouse(e);
-        if (target == null || target == dragged) return;
+        if (target == null || target == dragged || IsPinnedGroup(target)) return;
 
         int oldIndex = _vm.Groups.IndexOf(dragged);
         int newIndex = _vm.Groups.IndexOf(target);
         _vm.MoveGroup(oldIndex, newIndex);
+    }
+
+    private bool IsPinnedGroup(WatchlistGroup group)
+    {
+        int idx = _vm.Groups.IndexOf(group);
+        return idx >= 0 && idx < MainViewModel.FixedGroupCount;
     }
 
     private void GroupList_GiveFeedback(object sender, GiveFeedbackEventArgs e)
@@ -141,6 +273,11 @@ public partial class ManageGroupsWindow : Window
     private void BtnRename_Click(object sender, RoutedEventArgs e)
     {
         if (sender is not Button btn || btn.Tag is not WatchlistGroup group) return;
+        if (group.Id == MainViewModel.HoldingGroupId)
+        {
+            MessageBox.Show(this, "「持仓」分组不可重命名", "提示", MessageBoxButton.OK, MessageBoxImage.Information);
+            return;
+        }
         string? name = PromptText("重命名分组", group.Name);
         if (name == null) return;
         if (!_vm.RenameGroup(group.Id, name))
@@ -150,6 +287,11 @@ public partial class ManageGroupsWindow : Window
     private void BtnDelete_Click(object sender, RoutedEventArgs e)
     {
         if (sender is not Button btn || btn.Tag is not WatchlistGroup group) return;
+        if (group.Id == MainViewModel.HoldingGroupId)
+        {
+            MessageBox.Show(this, "「持仓」分组不可删除", "提示", MessageBoxButton.OK, MessageBoxImage.Information);
+            return;
+        }
         if (group.Name == MainViewModel.DefaultGroupName)
         {
             MessageBox.Show(this, "「自选」分组不可删除", "提示", MessageBoxButton.OK, MessageBoxImage.Information);

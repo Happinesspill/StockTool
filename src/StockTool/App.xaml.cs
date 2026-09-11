@@ -1,4 +1,4 @@
-using System.IO;
+﻿using System.IO;
 using System.Reflection;
 using System.Windows;
 using StockTool.Core.Services;
@@ -94,6 +94,7 @@ public partial class App : System.Windows.Application
         _hotkeyService?.Dispose();
         _eastMoneyClient?.Dispose();
         _trayIcon?.Dispose();
+        _mainWindow?.CloseForExit();
         Shutdown();
     }
 
