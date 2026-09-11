@@ -56,6 +56,7 @@ public class IntradayService
             {
                 stock.IntradayPoints = series.Prices;
                 stock.IntradayAvgPoints = series.AvgPrices;
+                stock.IntradayTimes = series.Times;
             });
         }
     }

@@ -27,6 +27,7 @@ public class ConfigStore
                 var config = JsonSerializer.Deserialize<AppConfig>(json, JsonOptions) ?? new AppConfig();
                 config.EnsureGroupsMigrated();
                 config.EnsureHomeIndicesMigrated();
+                config.EnsureHkCodesMigrated();
                 return config;
             }
         }
@@ -38,6 +39,7 @@ public class ConfigStore
         var fresh = new AppConfig();
         fresh.EnsureGroupsMigrated();
         fresh.EnsureHomeIndicesMigrated();
+        fresh.EnsureHkCodesMigrated();
         return fresh;
     }
 

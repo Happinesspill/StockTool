@@ -326,6 +326,7 @@
                         <controls:SparklineControl
                             Points="{Binding IntradayPoints}"
                             AvgPoints="{Binding IntradayAvgPoints}"
+                            Times="{Binding IntradayTimes}"
                             BaseLine="{Binding YesterdayClose}"
                             IsUp="{Binding IsUp}"
                             ShowLabels="True"

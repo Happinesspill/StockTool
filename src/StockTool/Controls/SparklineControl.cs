@@ -1,5 +1,6 @@
 ﻿using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Input;
 using System.Windows.Media;
 using StockTool.Core.Indicators;
 using StockTool.Core.Models;
@@ -11,13 +12,21 @@ public class SparklineControl : Control
     private const double BaseHeight = 180;
     private const double SubPaneHeight = 78;
 
+    // 悬停十字光标状态：索引 + 最近一次渲染的坐标映射
+    private int _hoverIndex = -1;
+    private HoverLayout _layout;
+
     public static readonly DependencyProperty PointsProperty =
         DependencyProperty.Register(nameof(Points), typeof(List<decimal>), typeof(SparklineControl),
-            new FrameworkPropertyMetadata(null, FrameworkPropertyMetadataOptions.AffectsRender));
+            new FrameworkPropertyMetadata(null, FrameworkPropertyMetadataOptions.AffectsRender, OnSeriesChanged));
 
     public static readonly DependencyProperty AvgPointsProperty =
         DependencyProperty.Register(nameof(AvgPoints), typeof(List<decimal>), typeof(SparklineControl),
-            new FrameworkPropertyMetadata(null, FrameworkPropertyMetadataOptions.AffectsRender));
+            new FrameworkPropertyMetadata(null, FrameworkPropertyMetadataOptions.AffectsRender, OnSeriesChanged));
+
+    public static readonly DependencyProperty TimesProperty =
+        DependencyProperty.Register(nameof(Times), typeof(List<string>), typeof(SparklineControl),
+            new FrameworkPropertyMetadata(null, FrameworkPropertyMetadataOptions.AffectsRender, OnSeriesChanged));
 
     public static readonly DependencyProperty BaseLineProperty =
         DependencyProperty.Register(nameof(BaseLine), typeof(decimal), typeof(SparklineControl),
@@ -53,6 +62,13 @@ public class SparklineControl : Control
         set => SetValue(AvgPointsProperty, value);
     }
 
+    /// <summary>分时时间点（HH:mm），与 Points 等长，供十字光标显示</summary>
+    public List<string>? Times
+    {
+        get => (List<string>?)GetValue(TimesProperty);
+        set => SetValue(TimesProperty, value);
+    }
+
     public decimal BaseLine
     {
         get => (decimal)GetValue(BaseLineProperty);
@@ -86,7 +102,25 @@ public class SparklineControl : Control
 
     private static void OnShowLabelsChanged(DependencyObject d, DependencyPropertyChangedEventArgs e)
     {
-        if (d is SparklineControl c) c.UpdateHeight();
+        if (d is SparklineControl c)
+        {
+            c.UpdateHeight();
+            c.UpdateHitTest();
+        }
+    }
+
+    /// <summary>数据刷新后索引可能失效，重置悬停状态</summary>
+    private static void OnSeriesChanged(DependencyObject d, DependencyPropertyChangedEventArgs e)
+    {
+        if (d is not SparklineControl c) return;
+        c._hoverIndex = -1;
+        c.InvalidateVisual();
+    }
+
+    /// <summary>详情大图需要接收鼠标事件；列表小图保持穿透</summary>
+    private void UpdateHitTest()
+    {
+        Background = ShowLabels ? Brushes.Transparent : null;
     }
 
     private static void OnSubCountChanged(DependencyObject d, DependencyPropertyChangedEventArgs e)
@@ -102,6 +136,29 @@ public class SparklineControl : Control
     {
         if (!ShowLabels) return;
         Height = BaseHeight + Math.Clamp(VisibleSubCount, 0, 3) * SubPaneHeight;
+    }
+
+    protected override void OnMouseMove(MouseEventArgs e)
+    {
+        base.OnMouseMove(e);
+        if (!ShowLabels || _layout.Count < 2 || _layout.StepX <= 0) return;
+
+        var pos = e.GetPosition(this);
+        int index = (int)Math.Round((pos.X - _layout.LeftPad) / _layout.StepX);
+        index = Math.Clamp(index, 0, _layout.Count - 1);
+        if (index == _hoverIndex) return;
+
+        _hoverIndex = index;
+        InvalidateVisual();
+    }
+
+    protected override void OnMouseLeave(MouseEventArgs e)
+    {
+        base.OnMouseLeave(e);
+        if (_hoverIndex < 0) return;
+
+        _hoverIndex = -1;
+        InvalidateVisual();
     }
 
     protected override void OnRender(DrawingContext dc)
@@ -194,25 +251,32 @@ public class SparklineControl : Control
             DrawLabel(dc, max.ToString("F2"), 2, topPad, labelBrush);
             DrawLabel(dc, min.ToString("F2"), 2, topPad + chartH - 12, labelBrush);
 
-            // 顶部图例：均价 / 最新（对齐常见分时软件）
-            decimal latest = points[^1];
-            decimal? latestAvg = drawAvg && avgPoints!.Count > 0 ? avgPoints[^1] : null;
+            // 顶部图例：悬停时显示光标时点数据，否则显示最新值（对齐常见分时软件）
             double legendY = topPad;
             double lx = leftPad + 4;
-            if (latestAvg.HasValue)
+            if (_hoverIndex >= 0 && _hoverIndex < points.Count)
             {
-                var avgBrush = new SolidColorBrush(Color.FromRgb(245, 166, 35));
-                var avgFt = new FormattedText($"均价:{latestAvg.Value:F2}",
-                    System.Globalization.CultureInfo.CurrentCulture, FlowDirection.LeftToRight,
-                    LabelTypeface, 10, avgBrush, 1.0);
-                dc.DrawText(avgFt, new Point(lx, legendY));
-                lx += avgFt.Width + 10;
+                DrawHoverLegend(dc, points, avgPoints, drawAvg, _hoverIndex, lx, legendY);
             }
-            var priceBrush = new SolidColorBrush(Color.FromRgb(0x33, 0x33, 0x33));
-            var priceFt = new FormattedText($"最新:{latest:F2}",
-                System.Globalization.CultureInfo.CurrentCulture, FlowDirection.LeftToRight,
-                LabelTypeface, 10, priceBrush, 1.0);
-            dc.DrawText(priceFt, new Point(lx, legendY));
+            else
+            {
+                decimal latest = points[^1];
+                decimal? latestAvg = drawAvg && avgPoints!.Count > 0 ? avgPoints[^1] : null;
+                if (latestAvg.HasValue)
+                {
+                    var avgBrush = new SolidColorBrush(Color.FromRgb(245, 166, 35));
+                    var avgFt = new FormattedText($"均价:{latestAvg.Value:F2}",
+                        System.Globalization.CultureInfo.CurrentCulture, FlowDirection.LeftToRight,
+                        LabelTypeface, 10, avgBrush, 1.0);
+                    dc.DrawText(avgFt, new Point(lx, legendY));
+                    lx += avgFt.Width + 10;
+                }
+                var priceBrush = new SolidColorBrush(Color.FromRgb(0x33, 0x33, 0x33));
+                var priceFt = new FormattedText($"最新:{latest:F2}",
+                    System.Globalization.CultureInfo.CurrentCulture, FlowDirection.LeftToRight,
+                    LabelTypeface, 10, priceBrush, 1.0);
+                dc.DrawText(priceFt, new Point(lx, legendY));
+            }
         }
 
         bool isUp = IsUp;
@@ -255,6 +319,71 @@ public class SparklineControl : Control
                 DrawPolyline(dc, avgSlice, leftPad, chartW / (count - 1), Y, avgPen);
             }
         }
+
+        // 记录本次坐标映射，供鼠标悬停反查索引
+        _layout = new HoverLayout
+        {
+            LeftPad = leftPad,
+            StepX = stepX,
+            Count = points.Count
+        };
+
+        // 悬停十字光标（仅详情大图）
+        if (showLabels && _hoverIndex >= 0 && _hoverIndex < points.Count)
+            DrawCrosshair(dc, points, avgPoints, drawAvg, _hoverIndex, leftPad, stepX, w, Y, topPad, chartH);
+    }
+
+    /// <summary>悬停数据行：时间 / 价 / 均价 / 涨跌幅</summary>
+    private void DrawHoverLegend(DrawingContext dc, List<decimal> points, List<decimal>? avgPoints, bool drawAvg,
+        int index, double x, double y)
+    {
+        decimal price = points[index];
+        decimal baseline = BaseLine;
+        decimal change = baseline > 0 ? (price - baseline) / baseline * 100m : 0;
+        string time = Times is { } times && index < times.Count ? times[index] : string.Empty;
+
+        var items = new List<(string Text, Color Color)>();
+        if (!string.IsNullOrEmpty(time))
+            items.Add((time, Color.FromRgb(0x33, 0x33, 0x33)));
+        items.Add(($"价:{price:F2}", Color.FromRgb(0x33, 0x33, 0x33)));
+        if (drawAvg && avgPoints != null && index < avgPoints.Count)
+            items.Add(($"均:{avgPoints[index]:F2}", Color.FromRgb(245, 166, 35)));
+        items.Add(($"{change:+0.00;-0.00;0.00}%", change >= 0 ? ColorRed : ColorGreen));
+
+        DrawColoredLegend(dc, x, y, [.. items]);
+    }
+
+    /// <summary>十字光标：虚线 + 光标点 + 价格/涨幅/时间标签</summary>
+    private void DrawCrosshair(DrawingContext dc, List<decimal> points, List<decimal>? avgPoints, bool drawAvg,
+        int index, double leftPad, double stepX, double w, Func<decimal, double> y, double topPad, double chartH)
+    {
+        decimal price = points[index];
+        double x = leftPad + index * stepX;
+        double priceY = y(price);
+        double bottom = topPad + chartH;
+
+        decimal baseline = BaseLine;
+        decimal change = baseline > 0 ? (price - baseline) / baseline * 100m : 0;
+        Color color = change >= 0 ? ColorRed : ColorGreen;
+
+        CrosshairRenderer.DrawCrossLines(dc, x, priceY, leftPad, w, topPad, bottom);
+        CrosshairRenderer.DrawPoint(dc, x, priceY, color);
+        if (drawAvg && avgPoints != null && index < avgPoints.Count)
+            CrosshairRenderer.DrawPoint(dc, x, y(avgPoints[index]), Color.FromRgb(245, 166, 35));
+
+        CrosshairRenderer.DrawTag(dc, price.ToString("F2"), priceY, leftPad - 2, color);
+        CrosshairRenderer.DrawTag(dc, $"{change:+0.00;-0.00;0.00}%", priceY, w - 2, color);
+
+        string time = Times is { } times && index < times.Count ? times[index] : string.Empty;
+        CrosshairRenderer.DrawTimeTag(dc, time, x, bottom - 8, leftPad, w);
+    }
+
+    /// <summary>最近一次渲染的坐标映射，供鼠标悬停反查索引</summary>
+    private readonly struct HoverLayout
+    {
+        public double LeftPad { get; init; }
+        public double StepX { get; init; }
+        public int Count { get; init; }
     }
 
     private static List<KlineItem> ToPseudoKlines(List<decimal> prices, int roll = 9)

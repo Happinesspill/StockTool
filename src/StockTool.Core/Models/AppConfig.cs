@@ -111,6 +111,41 @@ public class AppConfig
         if (HomeIndexCodes.Count == 0)
             HomeIndexCodes = IndexCatalog.DefaultHomeCodes.ToList();
     }
+
+    /// <summary>修正历史港股代码：东财市场码 "5" 曾被当成前缀，使 03690 存成 503690。</summary>
+    public void EnsureHkCodesMigrated()
+    {
+        var renamed = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+
+        foreach (var entry in Watchlist)
+        {
+            if (!string.Equals(entry.Market, "港股", StringComparison.OrdinalIgnoreCase)) continue;
+
+            string code = ToHkInternalCode(entry.Code);
+            if (string.Equals(code, entry.Code, StringComparison.OrdinalIgnoreCase)) continue;
+
+            renamed[entry.Code] = code;
+            entry.Code = code;
+        }
+
+        // 预警规则没有市场字段，只按上面确认过的映射改名，避免误改 A 股/场内基金代码
+        foreach (var rule in AlertRules)
+        {
+            if (renamed.TryGetValue(rule.StockCode, out var code))
+                rule.StockCode = code;
+        }
+    }
+
+    /// <summary>港股内部代码规范化：503690 → HK03690（已是 HKxxxxx 时原样返回）</summary>
+    private static string ToHkInternalCode(string code)
+    {
+        string digits = new(code.Where(char.IsDigit).ToArray());
+        if (digits.Length == 0) return code;
+
+        // 港股标准为 5 位代码，6 位数字说明带着历史错误前缀
+        if (digits.Length == 6 && digits[0] == '5') digits = digits[1..];
+        return "HK" + digits.PadLeft(5, '0');
+    }
 }
 
 public enum AlertMetric { Price, ChangePercent }

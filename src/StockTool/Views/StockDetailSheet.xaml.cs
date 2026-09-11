@@ -125,6 +125,7 @@ public partial class StockDetailSheet : UserControl
             {
                 stock.IntradayPoints = series.Prices;
                 stock.IntradayAvgPoints = series.AvgPrices;
+                stock.IntradayTimes = series.Times;
             }
         }
         catch { }

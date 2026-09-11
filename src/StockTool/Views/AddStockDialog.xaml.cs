@@ -180,6 +180,8 @@ public partial class AddStockDialog : Window
             "1" or "01" => "SH",
             "0" or "00" or "2" or "02" => "SZ",
             "116" => "HK",
+            // 东财港股返回 MarketType="5"（MktNum 116），不能当成代码前缀
+            "5" => "HK",
             _ => market.Length <= 3 ? market.ToUpper() : null
         };
     }

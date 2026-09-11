@@ -421,6 +421,7 @@ public class EastMoneyClient
                 return null;
 
             var prices = new List<decimal>();
+            var times = new List<string>();
             var volumes = new List<decimal>();
             var amounts = new List<decimal>();
 
@@ -432,7 +433,13 @@ public class EastMoneyClient
                 var parts = line.Split(' ', StringSplitOptions.RemoveEmptyEntries);
                 if (parts.Length < 2) continue;
                 if (!TryParseDec(parts[1], out var price) || price <= 0) continue;
+
+                string minute = FormatMinute(parts[0]);
+                // 腾讯会给 A 股补 15:00 之后的静态点，按交易时段裁掉，避免收盘后趋势继续延伸
+                if (!IsInTradingSession(internalCode, minute)) continue;
+
                 prices.Add(price);
+                times.Add(minute);
                 TryParseDec(parts.Length > 2 ? parts[2] : "0", out var vol);
                 TryParseDec(parts.Length > 3 ? parts[3] : "0", out var amt);
                 volumes.Add(vol);
@@ -453,13 +460,39 @@ public class EastMoneyClient
             return new IntradaySeries
             {
                 Prices = prices,
-                AvgPrices = avgs
+                AvgPrices = avgs,
+                Times = times
             };
         }
         catch
         {
             return null;
         }
+    }
+
+    /// <summary>"0930" → "09:30"；兼容 12 位时间戳，异常时原样返回</summary>
+    private static string FormatMinute(string raw)
+    {
+        string s = raw.Trim();
+        if (s.Length == 12) s = s[8..];
+        if (s.Length == 4 && int.TryParse(s, out int hhmm))
+            return $"{hhmm / 100:00}:{hhmm % 100:00}";
+        return s;
+    }
+
+    /// <summary>时间点是否落在该市场的交易时段内（A 股 15:00、港股 16:00 收盘）</summary>
+    private static bool IsInTradingSession(string internalCode, string minute)
+    {
+        if (!TimeSpan.TryParseExact(minute, "hh\\:mm",
+                System.Globalization.CultureInfo.InvariantCulture, out var t))
+            return true;   // 解析不出时间时保留，避免误删数据
+
+        if (internalCode.StartsWith("HK", StringComparison.OrdinalIgnoreCase))
+            return (t >= new TimeSpan(9, 30, 0) && t <= new TimeSpan(12, 0, 0))
+                || (t >= new TimeSpan(13, 0, 0) && t <= new TimeSpan(16, 0, 0));
+
+        return (t >= new TimeSpan(9, 30, 0) && t <= new TimeSpan(11, 30, 0))
+            || (t >= new TimeSpan(13, 0, 0) && t <= new TimeSpan(15, 0, 0));
     }
 
     /// <summary>若均价相对现价偏差过大（单位搞错），回退为价格简单累计均价</summary>

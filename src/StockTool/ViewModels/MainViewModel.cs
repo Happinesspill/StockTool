@@ -1,6 +1,7 @@
 ﻿using System.Collections.ObjectModel;
 using System.ComponentModel;
 using System.Runtime.CompilerServices;
+using System.Windows;
 using StockTool.Core.Models;
 using StockTool.Core.Services;
 using StockTool.Data;
@@ -139,6 +140,7 @@ public class MainViewModel : INotifyPropertyChanged
             OnPropertyChanged(nameof(SelectedGroupName));
             OnPropertyChanged(nameof(ShowHoldingColumn));
             OnPropertyChanged(nameof(ShowTrendColumn));
+            OnPropertyChanged(nameof(NameColumnWidth));
             OnPropertyChanged(nameof(IsFundGroup));
             OnPropertyChanged(nameof(EmptyListHint));
             OnPropertyChanged(nameof(PriceColumnHeader));
@@ -159,6 +161,11 @@ public class MainViewModel : INotifyPropertyChanged
 
     // 基金无可用盘中估值走势数据时不展示趋势列
     public bool ShowTrendColumn => !IsFundGroup;
+
+    /// <summary>名称列宽：持仓页 110，其它页 130；无趋势列的分组自适应</summary>
+    public GridLength NameColumnWidth => !ShowTrendColumn
+        ? new GridLength(1, GridUnitType.Star)
+        : new GridLength(SelectedGroupId == HoldingGroupId ? 110 : 130);
 
     public bool IsFundGroup => SelectedGroupName == FundGroupName;
 
@@ -385,6 +392,7 @@ public class MainViewModel : INotifyPropertyChanged
         OnPropertyChanged(nameof(SelectedGroupName));
         OnPropertyChanged(nameof(ShowHoldingColumn));
         OnPropertyChanged(nameof(ShowTrendColumn));
+        OnPropertyChanged(nameof(NameColumnWidth));
         OnPropertyChanged(nameof(IsFundGroup));
         OnPropertyChanged(nameof(EmptyListHint));
         OnPropertyChanged(nameof(PriceColumnHeader));

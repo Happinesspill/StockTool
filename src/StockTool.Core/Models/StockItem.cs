@@ -27,6 +27,7 @@ public class StockItem : INotifyPropertyChanged
     private decimal _holdingCost;
     private List<decimal> _intradayPoints = [];
     private List<decimal> _intradayAvgPoints = [];
+    private List<string> _intradayTimes = [];
     private List<KlineItem> _klineData = [];
     /// <summary>0=分时（当日走势），其余为东财 klt：5/15/30/60/101/102</summary>
     private int _klinePeriod = 0;
@@ -292,6 +293,13 @@ public class StockItem : INotifyPropertyChanged
     {
         get => _intradayAvgPoints;
         set { _intradayAvgPoints = value; OnPropertyChanged(); }
+    }
+
+    /// <summary>分时时间点（HH:mm），与 IntradayPoints 等长，供十字光标显示</summary>
+    public List<string> IntradayTimes
+    {
+        get => _intradayTimes;
+        set { _intradayTimes = value; OnPropertyChanged(); }
     }
 
     public List<KlineItem> KlineData
