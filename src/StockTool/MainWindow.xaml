@@ -16,7 +16,7 @@
         Height="{Binding WindowHeight}"
         Width="{Binding WindowWidth}"
         MinHeight="300"
-        MinWidth="320"
+        MinWidth="400"
         Closing="Window_Closing"
         LocationChanged="Window_LocationChanged"
         SizeChanged="Window_SizeChanged" d:DesignHeight="843" d:DesignWidth="347">
@@ -496,8 +496,9 @@
                     </StackPanel>
                 </Grid>
 
-                <!-- Holding summary -->
-                <Border Grid.Row="2" Margin="10,6,10,3" Background="#F6F8FB" BorderBrush="#E9EDF3" BorderThickness="1" CornerRadius="7" Padding="8,6">
+                <!-- Holding summary：持仓/基金页显示总持仓、总浮盈、今日盈亏；其他分组隐藏 -->
+                <Border Grid.Row="2" Margin="10,6,10,3" Background="#F6F8FB" BorderBrush="#E9EDF3" BorderThickness="1" CornerRadius="7" Padding="8,6"
+                        Visibility="{Binding ShowHoldingSummary, Converter={StaticResource BoolToVisConverter}}">
                     <Grid>
                         <Grid.ColumnDefinitions>
                             <ColumnDefinition Width="*" />
@@ -506,25 +507,47 @@
                             <ColumnDefinition Width="auto" />
                         </Grid.ColumnDefinitions>
                         <StackPanel>
-                            <TextBlock Text="持仓市值" Foreground="#9AA6B8" FontSize="10"/>
+                            <TextBlock Text="{Binding HoldingMarketValueLabel}" Foreground="#9AA6B8" FontSize="10"/>
                             <TextBlock Text="{Binding HoldingMarketValueText}" Foreground="#4F5D72" FontSize="13" FontWeight="SemiBold" Margin="0,2,0,0"/>
                         </StackPanel>
-                        <StackPanel Grid.Column="1">
+                        <StackPanel Grid.Column="1"
+                                    Visibility="{Binding ShowHoldingSummaryDetails, Converter={StaticResource BoolToVisConverter}}">
                             <TextBlock Text="总浮盈" Foreground="#9AA6B8" FontSize="10"/>
                             <TextBlock Text="{Binding HoldingProfitTotalText}" Foreground="#D93025" FontSize="13" FontWeight="SemiBold" Margin="0,2,0,0"/>
                         </StackPanel>
-                        <StackPanel Grid.Column="2">
+                        <StackPanel Grid.Column="2"
+                                    Visibility="{Binding ShowHoldingSummaryDetails, Converter={StaticResource BoolToVisConverter}}">
                             <StackPanel.ToolTip>
                                 <ToolTip>
-                                    <TextBlock Text="{Binding HoldingTodayProfitTooltip}"
-                                               FontSize="12"
-                                               FontFamily="Consolas, Microsoft YaHei UI" />
+                                    <ItemsControl ItemsSource="{Binding HoldingTodayProfitDetails}">
+                                        <ItemsControl.ItemTemplate>
+                                            <DataTemplate>
+                                                <Grid MinWidth="180" Margin="0,1">
+                                                    <Grid.ColumnDefinitions>
+                                                        <ColumnDefinition Width="*" />
+                                                        <ColumnDefinition Width="Auto" />
+                                                    </Grid.ColumnDefinitions>
+                                                    <TextBlock Text="{Binding Name}"
+                                                               FontSize="12"
+                                                               HorizontalAlignment="Left"
+                                                               VerticalAlignment="Center" />
+                                                    <TextBlock Grid.Column="1"
+                                                               Text="{Binding ChangeText}"
+                                                               FontSize="12"
+                                                               Margin="20,0,0,0"
+                                                               HorizontalAlignment="Right"
+                                                               VerticalAlignment="Center" />
+                                                </Grid>
+                                            </DataTemplate>
+                                        </ItemsControl.ItemTemplate>
+                                    </ItemsControl>
                                 </ToolTip>
                             </StackPanel.ToolTip>
                             <TextBlock Text="今日盈亏" Foreground="#9AA6B8" FontSize="10"/>
                             <TextBlock Text="{Binding HoldingTodayProfitText}" Foreground="#D93025" FontSize="13" FontWeight="SemiBold" Margin="0,2,0,0"/>
                         </StackPanel>
-                        <Button Grid.Column="3" Content="◉" Style="{StaticResource TitleBarButtonStyle}" ToolTip="预警设置" Click="BtnAlertSettings_Click" />
+                        <Button Grid.Column="3" Content="◉" Style="{StaticResource TitleBarButtonStyle}" ToolTip="预警设置" Click="BtnAlertSettings_Click"
+                                Visibility="{Binding ShowHoldingSummaryDetails, Converter={StaticResource BoolToVisConverter}}" />
                     </Grid>
                 </Border>
 
@@ -538,9 +561,10 @@
                     <Grid x:Name="HeaderGrid" MinWidth="320" Height="22">
                         <Grid.ColumnDefinitions>
                             <ColumnDefinition Width="{Binding DataContext.NameColumnWidth, ElementName=HeaderScroll}" />
+                            <ColumnDefinition Width="{Binding DataContext.ShowHoldingAmountColumn, ElementName=HeaderScroll, Converter={StaticResource BoolToGridLengthConverter}, ConverterParameter=80}" />
                             <ColumnDefinition Width="{Binding DataContext.ShowHoldingColumn, ElementName=HeaderScroll, Converter={StaticResource BoolToGridLengthConverter}, ConverterParameter=80}" />
                             <ColumnDefinition Width="{Binding DataContext.ShowTrendColumn, ElementName=HeaderScroll, Converter={StaticResource BoolToGridLengthConverter}, ConverterParameter=*}" />
-                            <ColumnDefinition Width="80" />
+                            <ColumnDefinition Width="96" />
 
                         </Grid.ColumnDefinitions>
                         <TextBlock Text="名称"
@@ -550,6 +574,18 @@
                                    VerticalAlignment="Center"
                                    Margin="10,0,0,0" />
                         <Button Grid.Column="1"
+                                Tag="holdingAmount"
+                                Style="{StaticResource ListHeaderButtonStyle}"
+                                HorizontalContentAlignment="Right"
+                                Margin="0,0,8,0"
+                                Click="BtnSortColumn_Click"
+                                Visibility="{Binding ShowHoldingAmountColumn, Converter={StaticResource BoolToVisConverter}}">
+                            <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
+                                <TextBlock Text="持有金额" />
+                                <TextBlock Text="{Binding HoldingAmountSortArrow}" Width="10" Margin="2,0,0,0" TextAlignment="Center" />
+                            </StackPanel>
+                        </Button>
+                        <Button Grid.Column="2"
                                 Tag="profit"
                                 Style="{StaticResource ListHeaderButtonStyle}"
                                 HorizontalContentAlignment="Right"
@@ -557,13 +593,13 @@
                                 Click="BtnSortColumn_Click"
                                 Visibility="{Binding ShowHoldingColumn, Converter={StaticResource BoolToVisConverter}}">
                             <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
-                                <TextBlock Text="持仓盈亏" />
+                                <TextBlock Text="{Binding HoldingProfitColumnHeader}" />
                                 <TextBlock Text="{Binding ProfitSortArrow}" Width="10" Margin="2,0,0,0" TextAlignment="Center" />
                             </StackPanel>
                         </Button>
-                        <TextBlock Grid.Column="2" Text="趋势" Foreground="#9AA6B8" FontSize="11" HorizontalAlignment="Center" VerticalAlignment="Center"
+                        <TextBlock Grid.Column="3" Text="趋势" Foreground="#9AA6B8" FontSize="11" HorizontalAlignment="Center" VerticalAlignment="Center"
                                    Visibility="{Binding ShowTrendColumn, Converter={StaticResource BoolToVisConverter}}" />
-                        <Button Grid.Column="3" Tag="change" Style="{StaticResource ListHeaderButtonStyle}" HorizontalContentAlignment="Right" Margin="0,0,10,0" Click="BtnSortColumn_Click">
+                        <Button Grid.Column="4" Tag="change" Style="{StaticResource ListHeaderButtonStyle}" HorizontalContentAlignment="Right" Margin="0,0,10,0" Click="BtnSortColumn_Click">
                             <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
                                 <TextBlock Text="{Binding PriceColumnHeader}" />
                                 <TextBlock Text="{Binding ChangeSortArrow}" Width="10" Margin="2,0,0,0" TextAlignment="Center" />
@@ -575,7 +611,7 @@
                 <!-- Stock list -->
                 <Grid Grid.Row="4">
                     <ScrollViewer x:Name="ListScroll"
-                                  VerticalScrollBarVisibility="Auto"
+                                  VerticalScrollBarVisibility="Hidden"
                                   HorizontalScrollBarVisibility="Auto"
                                   ScrollChanged="ListScroll_ScrollChanged">
                         <ItemsControl x:Name="StockList"
@@ -653,6 +689,24 @@
                                                                      Width="1.7"
                                                                      Height="1.7"
                                                                      Fill="#65758B" />
+                                                            </Canvas>
+                                                        </Viewbox>
+                                                    </MenuItem.Icon>
+                                                </MenuItem>
+                                                <MenuItem x:Name="MenuSetDca"
+                                                      Header="设置定投"
+                                                      Style="{StaticResource ContextMenuItemStyle}"
+                                                      Click="ContextMenu_SetDca">
+                                                    <MenuItem.Icon>
+                                                        <Viewbox Width="18" Height="18">
+                                                            <Canvas Width="16" Height="16">
+                                                                <Path Data="M3,8 A5,5 0 1 0 8,3 M8,3 L8,8 L11,8"
+                                                                  Stroke="#65758B"
+                                                                  StrokeThickness="1.35"
+                                                                  Fill="Transparent"
+                                                                  StrokeStartLineCap="Round"
+                                                                  StrokeEndLineCap="Round"
+                                                                  StrokeLineJoin="Round" />
                                                             </Canvas>
                                                         </Viewbox>
                                                     </MenuItem.Icon>
@@ -750,9 +804,10 @@
                                         <Grid>
                                             <Grid.ColumnDefinitions>
                                                 <ColumnDefinition Width="{Binding DataContext.NameColumnWidth, RelativeSource={RelativeSource AncestorType=ItemsControl}}" />
+                                                <ColumnDefinition Width="{Binding DataContext.ShowHoldingAmountColumn, RelativeSource={RelativeSource AncestorType=ItemsControl}, Converter={StaticResource BoolToGridLengthConverter}, ConverterParameter=80}" />
                                                 <ColumnDefinition Width="{Binding DataContext.ShowHoldingColumn, RelativeSource={RelativeSource AncestorType=ItemsControl}, Converter={StaticResource BoolToGridLengthConverter}, ConverterParameter=80}" />
                                                 <ColumnDefinition Width="{Binding DataContext.ShowTrendColumn, RelativeSource={RelativeSource AncestorType=ItemsControl}, Converter={StaticResource BoolToGridLengthConverter}, ConverterParameter=*}" />
-                                                <ColumnDefinition Width="80" />
+                                                <ColumnDefinition Width="96" />
                                                 <ColumnDefinition Width="0" />
 
 
@@ -766,7 +821,8 @@
                                                        FontSize="{Binding DataContext.FontSize, RelativeSource={RelativeSource AncestorType=Window}, Converter={StaticResource FontSizeConverter}}"
                                                        FontWeight="Bold"
                                                        TextTrimming="CharacterEllipsis" />
-                                                <StackPanel Orientation="Horizontal" Margin="0,2,0,0">
+                                                <StackPanel Orientation="Horizontal" Margin="0,2,0,0"
+                                                            Visibility="{Binding DataContext.IsHoldingGroupSelected, RelativeSource={RelativeSource AncestorType=Window}, Converter={StaticResource EqualsVisConverter}, ConverterParameter=False}">
                                                     <Border CornerRadius="3"
                                                         Background="#3050A0FF"
                                                         Padding="3,1"
@@ -781,9 +837,25 @@
                                                            Foreground="#888888"
                                                            FontSize="{Binding DataContext.FontSize, RelativeSource={RelativeSource AncestorType=Window}, Converter={StaticResource FontSizeConverter}, ConverterParameter=-3}" />
                                                 </StackPanel>
+                                                <TextBlock Text="{Binding HoldingListMarketValueText}"
+                                                       Foreground="#D93025"
+                                                       FontWeight="Bold"
+                                                       FontSize="{Binding DataContext.FontSize, RelativeSource={RelativeSource AncestorType=Window}, Converter={StaticResource FontSizeConverter}, ConverterParameter=-3}"
+                                                       Margin="0,2,0,0"
+                                                       Visibility="{Binding DataContext.IsHoldingGroupSelected, RelativeSource={RelativeSource AncestorType=Window}, Converter={StaticResource BoolToVisConverter}}" />
                                             </StackPanel>
 
-                                            <StackPanel Grid.Column="1"
+                                            <TextBlock Grid.Column="1"
+                                                       Text="{Binding HoldingAmountText}"
+                                                       Foreground="#4F5D72"
+                                                       FontSize="12"
+                                                       FontWeight="SemiBold"
+                                                       HorizontalAlignment="Right"
+                                                       VerticalAlignment="Center"
+                                                       Margin="0,0,8,0"
+                                                       Visibility="{Binding DataContext.ShowHoldingAmountColumn, RelativeSource={RelativeSource AncestorType=Window}, Converter={StaticResource BoolToVisConverter}}" />
+
+                                            <StackPanel Grid.Column="2"
                                                     VerticalAlignment="Center"
                                                     HorizontalAlignment="Right"
                                                     Margin="0,0,8,0"
@@ -813,7 +885,7 @@
                                                        Margin="0,2,0,0" />
                                             </StackPanel>
 
-                                            <StackPanel Grid.Column="3"
+                                            <StackPanel Grid.Column="4"
                                                     VerticalAlignment="Center"
                                                     HorizontalAlignment="Right"
                                                     Margin="0,0,10,0">
@@ -821,8 +893,32 @@
                                                        FontSize="12"
                                                        FontWeight="SemiBold"
                                                        HorizontalAlignment="Right"
-                                                       Foreground="#1A1A1A" />
-                                                <TextBlock FontSize="11"
+                                                       Foreground="#1A1A1A"
+                                                       Visibility="{Binding IsFund, Converter={StaticResource EqualsVisConverter}, ConverterParameter=False}" />
+                                                <TextBlock Text="{Binding TodayEstimateProfitText}"
+                                                       FontSize="12"
+                                                       FontWeight="SemiBold"
+                                                       HorizontalAlignment="Right"
+                                                       Visibility="{Binding IsFund, Converter={StaticResource EqualsVisConverter}, ConverterParameter=True}">
+                                                    <TextBlock.Style>
+                                                        <Style TargetType="TextBlock">
+                                                            <Setter Property="Foreground" Value="#AAB4C3" />
+                                                            <Style.Triggers>
+                                                                <DataTrigger Binding="{Binding HasHolding}" Value="True">
+                                                                    <Setter Property="Foreground" Value="#D93025" />
+                                                                </DataTrigger>
+                                                                <DataTrigger Binding="{Binding TodayHoldingProfit, Converter={StaticResource NegativeConverter}}" Value="True">
+                                                                    <Setter Property="Foreground" Value="#1A8C3F" />
+                                                                </DataTrigger>
+                                                                <DataTrigger Binding="{Binding HasFundValuation}" Value="False">
+                                                                    <Setter Property="Foreground" Value="#AAB4C3" />
+                                                                </DataTrigger>
+                                                            </Style.Triggers>
+                                                        </Style>
+                                                    </TextBlock.Style>
+                                                </TextBlock>
+                                                <TextBlock Text="{Binding ChangePercentText}"
+                                                       FontSize="11"
                                                        FontWeight="SemiBold"
                                                        HorizontalAlignment="Right"
                                                        Margin="0,2,0,0">
@@ -837,24 +933,25 @@
                                                                 <DataTrigger Binding="{Binding ChangePercent}" Value="0">
                                                                     <Setter Property="Foreground" Value="#888888" />
                                                                 </DataTrigger>
+                                                                <DataTrigger Binding="{Binding ChangePercentText}" Value="--">
+                                                                    <Setter Property="Foreground" Value="#888888" />
+                                                                </DataTrigger>
                                                             </Style.Triggers>
                                                         </Style>
                                                     </TextBlock.Style>
-                                                <Run Text="{Binding ChangePercent, StringFormat={}{0:+0.00;-0.00;0.00}}" />
-                                                <Run Text="%" />
                                                 </TextBlock>
                                             </StackPanel>
 
-                                            <controls:SparklineControl Grid.Column="2"
+                                            <controls:SparklineControl Grid.Column="3"
                                                                     Points="{Binding IntradayPoints}"
                                                                     BaseLine="{Binding YesterdayClose}"
                                                                     IsUp="{Binding IsUp}"
                                                                     Margin="4,4"
                                                                     Visibility="{Binding DataContext.ShowTrendColumn, RelativeSource={RelativeSource AncestorType=Window}, Converter={StaticResource BoolToVisConverter}}" />
 
-                                            <TextBlock Grid.Column="4" Text="{Binding TurnoverText}" Foreground="#65758B" FontSize="11" HorizontalAlignment="Right" VerticalAlignment="Center" Margin="0,0,10,0" />
-                                            <TextBlock Grid.Column="5" Text="{Binding TurnoverRateText}" Foreground="#65758B" FontSize="11" HorizontalAlignment="Right" VerticalAlignment="Center" Margin="0,0,10,0" />
-                                            <TextBlock Grid.Column="6" Text="{Binding SpeedText}" FontSize="11" HorizontalAlignment="Right" VerticalAlignment="Center" Margin="0,0,10,0">
+                                            <TextBlock Grid.Column="5" Text="{Binding TurnoverText}" Foreground="#65758B" FontSize="11" HorizontalAlignment="Right" VerticalAlignment="Center" Margin="0,0,10,0" />
+                                            <TextBlock Grid.Column="6" Text="{Binding TurnoverRateText}" Foreground="#65758B" FontSize="11" HorizontalAlignment="Right" VerticalAlignment="Center" Margin="0,0,10,0" />
+                                            <TextBlock Grid.Column="7" Text="{Binding SpeedText}" FontSize="11" HorizontalAlignment="Right" VerticalAlignment="Center" Margin="0,0,10,0">
                                                 <TextBlock.Style>
                                                     <Style TargetType="TextBlock">
                                                         <Setter Property="Foreground" Value="#AAB4C3" />
@@ -872,12 +969,12 @@
                                                     </Style>
                                                 </TextBlock.Style>
                                             </TextBlock>
-                                            <TextBlock Grid.Column="7" Text="{Binding VolumeRatioText}" Foreground="#65758B" FontSize="11" HorizontalAlignment="Right" VerticalAlignment="Center" Margin="0,0,10,0" />
-                                            <StackPanel Grid.Column="8" VerticalAlignment="Center" HorizontalAlignment="Right" Margin="0,0,10,0">
+                                            <TextBlock Grid.Column="8" Text="{Binding VolumeRatioText}" Foreground="#65758B" FontSize="11" HorizontalAlignment="Right" VerticalAlignment="Center" Margin="0,0,10,0" />
+                                            <StackPanel Grid.Column="9" VerticalAlignment="Center" HorizontalAlignment="Right" Margin="0,0,10,0">
                                                 <TextBlock Text="{Binding FloatMarketValueText}" Foreground="#65758B" FontSize="11" HorizontalAlignment="Right" />
                                                 <TextBlock Text="{Binding TotalMarketValueText}" Foreground="#9AA6B8" FontSize="10" HorizontalAlignment="Right" Margin="0,2,0,0" />
                                             </StackPanel>
-                                            <Button Grid.Column="9"
+                                            <Button Grid.Column="10"
                                                 Width="24"
                                                 Height="24"
                                                 HorizontalAlignment="Center"

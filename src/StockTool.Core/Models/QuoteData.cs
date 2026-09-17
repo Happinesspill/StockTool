@@ -51,6 +51,9 @@ public class QuoteItem
     public decimal F21 { get; set; } // float market value
     [JsonConverter(typeof(FlexibleDecimalConverter))]
     public decimal F22 { get; set; } // speed
+
+    // 基金是否有盘中估算净值（非 JSON 字段）
+    public bool HasEstimate { get; set; }
 }
 
 public class IntradayResponse
@@ -112,6 +115,28 @@ public class FundValuationItem
     public decimal NAV { get; set; }
     public string? GZTIME { get; set; }
     public string? PDATE { get; set; }
+}
+
+public class FundNavHistoryResponse
+{
+    public FundNavHistoryData? Data { get; set; }
+    public int TotalCount { get; set; }
+}
+
+public class FundNavHistoryData
+{
+    public List<FundNavHistoryItem>? LSJZList { get; set; }
+}
+
+public class FundNavHistoryItem
+{
+    public string? FSRQ { get; set; }
+    [JsonConverter(typeof(FlexibleDecimalConverter))]
+    public decimal DWJZ { get; set; }
+    [JsonConverter(typeof(FlexibleDecimalConverter))]
+    public decimal LJJZ { get; set; }
+    [JsonConverter(typeof(FlexibleDecimalConverter))]
+    public decimal JZZZL { get; set; }
 }
 
 // ── K-line ──────────────────────────────────────

@@ -35,6 +35,12 @@
             </Setter>
         </Style>
 
+        <Style x:Key="FundRangeChipStyle" TargetType="Button" BasedOn="{StaticResource PeriodTabButtonStyle}">
+            <Setter Property="Background" Value="#F0F1F3" />
+            <Setter Property="Foreground" Value="#666666" />
+            <Setter Property="Margin" Value="2,0" />
+        </Style>
+
         <Style x:Key="TitleBarButtonStyle" TargetType="Button">
             <Setter Property="Width" Value="32" />
             <Setter Property="Height" Value="28" />
@@ -143,10 +149,10 @@
 
                         <StackPanel Grid.Column="0">
                             <StackPanel Orientation="Horizontal">
-                                <TextBlock Text="{Binding DisplayName}"
+                                <TextBlock Text="{Binding DataContext.SelectedStock.Name, RelativeSource={RelativeSource AncestorType=UserControl}}"
                                            Foreground="#1A1A1A"
                                            FontSize="16" FontWeight="Bold" />
-                                <TextBlock Text="{Binding CodeNumeric}"
+                                <TextBlock Text="{Binding DataContext.SelectedStock.CodeNumeric, RelativeSource={RelativeSource AncestorType=UserControl}}"
                                            Foreground="#999999"
                                            FontSize="12"
                                            VerticalAlignment="Bottom"
@@ -171,7 +177,8 @@
                                     </TextBlock.Style>
                                 </TextBlock>
                                 <TextBlock FontSize="13" FontWeight="SemiBold"
-                                           VerticalAlignment="Bottom" Margin="10,0,0,3">
+                                           VerticalAlignment="Bottom" Margin="10,0,0,3"
+                                           Text="{Binding ChangePercentText}">
                                     <TextBlock.Style>
                                         <Style TargetType="TextBlock">
                                             <Setter Property="Foreground" Value="#D93025" />
@@ -182,24 +189,27 @@
                                                 <DataTrigger Binding="{Binding ChangePercent}" Value="0">
                                                     <Setter Property="Foreground" Value="#888888" />
                                                 </DataTrigger>
+                                                <DataTrigger Binding="{Binding ChangePercentText}" Value="--">
+                                                    <Setter Property="Foreground" Value="#888888" />
+                                                </DataTrigger>
                                             </Style.Triggers>
                                         </Style>
                                     </TextBlock.Style>
-                                    <Run Text="{Binding ChangePercent, StringFormat={}{0:+0.00;-0.00;0.00}}" />
-                                    <Run Text="%" />
                                 </TextBlock>
                                 <TextBlock Foreground="#999999" FontSize="12"
                                            VerticalAlignment="Bottom" Margin="12,0,0,3"
-                                           Text="{Binding Open, StringFormat=今开 {0:F2}}" />
+                                           Text="{Binding Open, StringFormat=今开 {0:F2}}"
+                                           Visibility="{Binding IsFund, Converter={StaticResource EqualsVisConverter}, ConverterParameter=False}" />
                             </StackPanel>
                         </StackPanel>
                     </Grid>
 
-                    <!-- Stats card: 最高 / 最低 / 成交额 -->
+                    <!-- Stats card: 最高 / 最低 / 成交额（股票） -->
                     <Border Background="#F5F6F8"
                             CornerRadius="10"
                             Padding="8,10"
-                            Margin="0,0,0,10">
+                            Margin="0,0,0,10"
+                            Visibility="{Binding IsFund, Converter={StaticResource EqualsVisConverter}, ConverterParameter=False}">
                         <Grid>
                             <Grid.ColumnDefinitions>
                                 <ColumnDefinition Width="*" />
@@ -224,8 +234,40 @@
                         </Grid>
                     </Border>
 
-                    <!-- Period pill selector -->
-                    <Border Background="#F0F1F3" CornerRadius="16" Padding="3" Margin="0,0,0,8">
+                    <!-- 基金日线：区间收益头 -->
+                    <Grid Margin="0,0,0,8"
+                          Visibility="{Binding IsFund, Converter={StaticResource EqualsVisConverter}, ConverterParameter=True}">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="Auto" />
+                            <ColumnDefinition Width="*" />
+                        </Grid.ColumnDefinitions>
+                        <StackPanel>
+                            <TextBlock Text="日期" Foreground="#9AA6B8" FontSize="11" />
+                            <TextBlock Text="{Binding FundNavHoverDate}" Foreground="#1A1A1A" FontSize="13" FontWeight="SemiBold" Margin="0,2,0,0" />
+                        </StackPanel>
+                        <StackPanel Grid.Column="1" HorizontalAlignment="Right">
+                            <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
+                                <Ellipse Width="8" Height="8" Fill="#D93025" Margin="0,0,6,0" VerticalAlignment="Center" />
+                                <TextBlock Text="本产品" Foreground="#65758B" FontSize="11" VerticalAlignment="Center" />
+                            </StackPanel>
+                            <TextBlock Text="{Binding FundNavHoverReturn}" FontSize="14" FontWeight="SemiBold" HorizontalAlignment="Right" Margin="0,2,0,0">
+                                <TextBlock.Style>
+                                    <Style TargetType="TextBlock">
+                                        <Setter Property="Foreground" Value="#D93025" />
+                                        <Style.Triggers>
+                                            <DataTrigger Binding="{Binding FundNavHoverReturn}" Value="">
+                                                <Setter Property="Foreground" Value="#888888" />
+                                            </DataTrigger>
+                                        </Style.Triggers>
+                                    </Style>
+                                </TextBlock.Style>
+                            </TextBlock>
+                        </StackPanel>
+                    </Grid>
+
+                    <!-- Period pill selector（股票） -->
+                    <Border Background="#F0F1F3" CornerRadius="16" Padding="3" Margin="0,0,0,8"
+                            Visibility="{Binding IsFund, Converter={StaticResource EqualsVisConverter}, ConverterParameter=False}">
                         <UniformGrid Columns="7" Rows="1">
                             <Button Content="分时" Tag="0" Click="KlinePeriod_Click">
                                 <Button.Style>
@@ -321,8 +363,9 @@
                         </UniformGrid>
                     </Border>
 
-                    <!-- Charts: 分时折线 / K线蜡烛+指标 -->
-                    <Grid MinHeight="180">
+                    <!-- Charts: 分时折线 / K线蜡烛+指标（股票） -->
+                    <Grid MinHeight="180"
+                          Visibility="{Binding IsFund, Converter={StaticResource EqualsVisConverter}, ConverterParameter=False}">
                         <controls:SparklineControl
                             Points="{Binding IntradayPoints}"
                             AvgPoints="{Binding IntradayAvgPoints}"
@@ -339,6 +382,83 @@
                             Margin="0,2"
                             Visibility="{Binding KlinePeriod, Converter={StaticResource EqualsVisConverter}, ConverterParameter='!0'}" />
                     </Grid>
+
+                    <!-- 基金日线收益曲线 -->
+                    <controls:FundNavChartControl
+                        Points="{Binding FundNavChart}"
+                        Markers="{Binding FundTradeMarkers}"
+                        Margin="0,2,0,8"
+                        Visibility="{Binding IsFund, Converter={StaticResource EqualsVisConverter}, ConverterParameter=True}" />
+
+                    <!-- 基金区间 Chip -->
+                    <UniformGrid Columns="5" Rows="1" Margin="0,0,0,4"
+                                 Visibility="{Binding IsFund, Converter={StaticResource EqualsVisConverter}, ConverterParameter=True}">
+                        <Button Content="近1月" Tag="1m" Click="FundNavRange_Click">
+                            <Button.Style>
+                                <Style TargetType="Button" BasedOn="{StaticResource FundRangeChipStyle}">
+                                    <Style.Triggers>
+                                        <DataTrigger Binding="{Binding FundNavRange}" Value="1m">
+                                            <Setter Property="Background" Value="#FDECEE" />
+                                            <Setter Property="Foreground" Value="#D93025" />
+                                            <Setter Property="FontWeight" Value="SemiBold" />
+                                        </DataTrigger>
+                                    </Style.Triggers>
+                                </Style>
+                            </Button.Style>
+                        </Button>
+                        <Button Content="近3月" Tag="3m" Click="FundNavRange_Click">
+                            <Button.Style>
+                                <Style TargetType="Button" BasedOn="{StaticResource FundRangeChipStyle}">
+                                    <Style.Triggers>
+                                        <DataTrigger Binding="{Binding FundNavRange}" Value="3m">
+                                            <Setter Property="Background" Value="#FDECEE" />
+                                            <Setter Property="Foreground" Value="#D93025" />
+                                            <Setter Property="FontWeight" Value="SemiBold" />
+                                        </DataTrigger>
+                                    </Style.Triggers>
+                                </Style>
+                            </Button.Style>
+                        </Button>
+                        <Button Content="近6月" Tag="6m" Click="FundNavRange_Click">
+                            <Button.Style>
+                                <Style TargetType="Button" BasedOn="{StaticResource FundRangeChipStyle}">
+                                    <Style.Triggers>
+                                        <DataTrigger Binding="{Binding FundNavRange}" Value="6m">
+                                            <Setter Property="Background" Value="#FDECEE" />
+                                            <Setter Property="Foreground" Value="#D93025" />
+                                            <Setter Property="FontWeight" Value="SemiBold" />
+                                        </DataTrigger>
+                                    </Style.Triggers>
+                                </Style>
+                            </Button.Style>
+                        </Button>
+                        <Button Content="近1年" Tag="1y" Click="FundNavRange_Click">
+                            <Button.Style>
+                                <Style TargetType="Button" BasedOn="{StaticResource FundRangeChipStyle}">
+                                    <Style.Triggers>
+                                        <DataTrigger Binding="{Binding FundNavRange}" Value="1y">
+                                            <Setter Property="Background" Value="#FDECEE" />
+                                            <Setter Property="Foreground" Value="#D93025" />
+                                            <Setter Property="FontWeight" Value="SemiBold" />
+                                        </DataTrigger>
+                                    </Style.Triggers>
+                                </Style>
+                            </Button.Style>
+                        </Button>
+                        <Button Content="成立以来" Tag="all" Click="FundNavRange_Click">
+                            <Button.Style>
+                                <Style TargetType="Button" BasedOn="{StaticResource FundRangeChipStyle}">
+                                    <Style.Triggers>
+                                        <DataTrigger Binding="{Binding FundNavRange}" Value="all">
+                                            <Setter Property="Background" Value="#FDECEE" />
+                                            <Setter Property="Foreground" Value="#D93025" />
+                                            <Setter Property="FontWeight" Value="SemiBold" />
+                                        </DataTrigger>
+                                    </Style.Triggers>
+                                </Style>
+                            </Button.Style>
+                        </Button>
+                    </UniformGrid>
                 </StackPanel>
             </ScrollViewer>
         </Border>

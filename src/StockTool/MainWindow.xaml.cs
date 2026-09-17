@@ -59,9 +59,21 @@ public partial class MainWindow : Window
 
     private void BtnAdd_Click(object sender, RoutedEventArgs e)
     {
-        var dialog = new AddStockDialog(_client, VM.IsFundGroup) { Owner = this };
-        if (dialog.ShowDialog() == true
-            && !string.IsNullOrEmpty(dialog.SelectedInternalCode)
+        var dialog = new AddStockDialog(_client, VM.IsFundGroup, VM.GetHoldingVisionOptions, OpenSettings) { Owner = this };
+        if (dialog.ShowDialog() != true) return;
+
+        if (dialog.ImportedHoldings.Count > 0)
+        {
+            int n = VM.IsFundGroup
+                ? VM.SyncFundHoldingsFromImport(dialog.ImportedHoldings)
+                : VM.SyncHoldingsFromImport(dialog.ImportedHoldings);
+            if (n > 0)
+                MessageBox.Show(this, $"已同步 {n} 只持仓（未删除原有持仓）", "同步完成",
+                    MessageBoxButton.OK, MessageBoxImage.Information);
+            return;
+        }
+
+        if (!string.IsNullOrEmpty(dialog.SelectedInternalCode)
             && !string.IsNullOrEmpty(dialog.SelectedName))
         {
             VM.AddStock(dialog.SelectedInternalCode, dialog.SelectedName, dialog.SelectedMarket ?? "");
@@ -81,15 +93,33 @@ public partial class MainWindow : Window
 
     public void OpenSettings()
     {
-        var dialog = new SettingsWindow(VM.Opacity, VM.FontSize, VM.RefreshInterval, VM.Hotkey, VM.Topmost, VM.ShowMarketTag, VM)
+        var dialog = new SettingsWindow(
+            VM.Opacity,
+            VM.FontSize,
+            VM.RefreshInterval,
+            VM.Hotkey,
+            VM.Topmost,
+            VM.ShowMarketTag,
+            VM.HoldingVisionProvider,
+            VM.DeepSeekApiKey,
+            VM.MimoApiKey,
+            VM)
         {
             Owner = this
         };
 
         if (dialog.ShowDialog() == true)
         {
-            VM.SaveSettings(dialog.OpacityValue, dialog.FontSizeValue, dialog.RefreshInterval,
-                            dialog.Hotkey, dialog.IsTopmost, dialog.ShowMarketTag);
+            VM.SaveSettings(
+                dialog.OpacityValue,
+                dialog.FontSizeValue,
+                dialog.RefreshInterval,
+                dialog.Hotkey,
+                dialog.IsTopmost,
+                dialog.ShowMarketTag,
+                dialog.HoldingVisionProvider,
+                dialog.DeepSeekApiKey,
+                dialog.MimoApiKey);
             SettingsChanged?.Invoke(dialog.Hotkey);
         }
     }
@@ -419,6 +449,12 @@ public partial class MainWindow : Window
             removeFromGroup.Visibility = VM.SelectedGroupId == MainViewModel.HoldingGroupId
                 ? Visibility.Collapsed
                 : Visibility.Visible;
+
+        foreach (var obj in menu.Items)
+        {
+            if (obj is MenuItem mi && mi.Header as string == "设置定投")
+                mi.Visibility = stock.IsFund ? Visibility.Visible : Visibility.Collapsed;
+        }
     }
 
     private void RebuildGroupSubMenu(ContextMenu menu, StockItem stock)
@@ -515,6 +551,126 @@ public partial class MainWindow : Window
         var result = ShowHoldingDialog(stock, this);
         if (result == null) return;
         VM.SetHolding(stock, result.Value.Shares, result.Value.Cost);
+    }
+
+    private void ContextMenu_SetDca(object sender, RoutedEventArgs e)
+    {
+        var stock = GetStockItemFromSender(sender);
+        if (stock == null || !stock.IsFund) return;
+
+        var existing = VM.GetDcaPlan(stock.Code);
+        var result = ShowDcaDialog(stock, existing, this);
+        if (result == null) return;
+        VM.SetDcaPlan(stock.Code, result.Value.Amount, result.Value.Enabled);
+    }
+
+    private static (decimal Amount, bool Enabled)? ShowDcaDialog(StockItem stock, DcaPlan? existing, Window owner)
+    {
+        var dialog = new Window
+        {
+            Title = "设置定投",
+            Width = 340,
+            Height = 260,
+            WindowStyle = WindowStyle.None,
+            AllowsTransparency = true,
+            Background = Brushes.Transparent,
+            ResizeMode = ResizeMode.NoResize,
+            Topmost = true,
+            Owner = owner,
+            WindowStartupLocation = WindowStartupLocation.CenterOwner,
+            ShowInTaskbar = false
+        };
+
+        var amountBox = CreateDialogTextBox(existing is { Amount: > 0 }
+            ? existing.Amount.ToString("0.####", CultureInfo.InvariantCulture)
+            : "100");
+        var enabledBox = new CheckBox
+        {
+            Content = "启用每日定投（15:00 后按已公布净值入账）",
+            IsChecked = existing?.Enabled ?? true,
+            Margin = new Thickness(0, 12, 0, 0),
+            Foreground = new SolidColorBrush(Color.FromRgb(0x33, 0x33, 0x33)),
+            FontSize = 12
+        };
+        var errorText = new TextBlock
+        {
+            Foreground = new SolidColorBrush(Color.FromRgb(0xE1, 0x1D, 0x48)),
+            FontSize = 12,
+            Margin = new Thickness(0, 2, 0, 8),
+            Visibility = Visibility.Collapsed
+        };
+
+        var cancelBtn = CreateRoundedButton("取消", false);
+        cancelBtn.Width = 75;
+        cancelBtn.Height = 32;
+        var okBtn = CreateRoundedButton("确定", true);
+        okBtn.Width = 75;
+        okBtn.Height = 32;
+        okBtn.Margin = new Thickness(0, 0, 8, 0);
+
+        (decimal Amount, bool Enabled)? result = null;
+        okBtn.Click += (_, _) =>
+        {
+            if (!TryParseHolding(amountBox.Text, out var amount) || amount < 0)
+            {
+                errorText.Text = "请输入有效的定投金额";
+                errorText.Visibility = Visibility.Visible;
+                return;
+            }
+
+            bool enabled = enabledBox.IsChecked == true;
+            if (enabled && amount <= 0)
+            {
+                errorText.Text = "启用定投时金额须大于 0";
+                errorText.Visibility = Visibility.Visible;
+                return;
+            }
+
+            result = (amount, enabled && amount > 0);
+            dialog.DialogResult = true;
+        };
+        cancelBtn.Click += (_, _) => dialog.DialogResult = false;
+
+        var buttons = new StackPanel
+        {
+            Orientation = Orientation.Horizontal,
+            HorizontalAlignment = HorizontalAlignment.Right,
+            Margin = new Thickness(0, 16, 0, 0)
+        };
+        buttons.Children.Add(okBtn);
+        buttons.Children.Add(cancelBtn);
+
+        var stack = new StackPanel { Margin = new Thickness(20) };
+        stack.Children.Add(new TextBlock
+        {
+            Text = $"设置 {stock.DisplayName} 定投",
+            FontSize = 14,
+            FontWeight = FontWeights.SemiBold,
+            Margin = new Thickness(0, 0, 0, 12),
+            Foreground = new SolidColorBrush(Color.FromRgb(0x1A, 0x1A, 0x1A))
+        });
+        stack.Children.Add(new TextBlock { Text = "每日定投金额", FontSize = 12, Foreground = new SolidColorBrush(Color.FromRgb(0x66, 0x66, 0x66)) });
+        stack.Children.Add(amountBox);
+        stack.Children.Add(enabledBox);
+        stack.Children.Add(errorText);
+        stack.Children.Add(buttons);
+
+        dialog.Content = new Border
+        {
+            Background = new SolidColorBrush(Color.FromArgb(0xF8, 0xFF, 0xFF, 0xFF)),
+            BorderBrush = new SolidColorBrush(Color.FromArgb(0xD0, 0xCC, 0xCC, 0xCC)),
+            BorderThickness = new Thickness(1),
+            CornerRadius = new CornerRadius(12),
+            Child = stack
+        };
+        dialog.MouseLeftButtonDown += (_, _) => dialog.DragMove();
+        dialog.Loaded += (_, _) =>
+        {
+            amountBox.Focus();
+            amountBox.SelectAll();
+        };
+
+        return dialog.ShowDialog() == true ? result : null;
     }
 
     private void ContextMenu_SetAlert(object sender, RoutedEventArgs e)
@@ -680,11 +836,12 @@ public partial class MainWindow : Window
 
     private static (decimal Shares, decimal Cost)? ShowHoldingDialog(StockItem stock, Window owner)
     {
+        var isFund = stock.IsFund;
         var dialog = new Window
         {
             Title = "设置持仓",
             Width = 340,
-            Height = 220,
+            Height = 236,
             WindowStyle = WindowStyle.None,
             AllowsTransparency = true,
             Background = Brushes.Transparent,
@@ -719,14 +876,14 @@ public partial class MainWindow : Window
         {
             if (!TryParseHolding(sharesBox.Text, out var shares) || !TryParseHolding(costBox.Text, out var cost))
             {
-                errorText.Text = "请输入有效的持仓数量和成本价";
+                errorText.Text = isFund ? "请输入有效的持仓成本单价和持有份额" : "请输入有效的持仓数量和成本价";
                 errorText.Visibility = Visibility.Visible;
                 return;
             }
 
             if ((shares == 0 && cost > 0) || (shares > 0 && cost == 0))
             {
-                errorText.Text = "清空持仓时数量和成本价都填 0 或留空";
+                errorText.Text = isFund ? "清空持仓时成本单价和份额都填 0 或留空" : "清空持仓时数量和成本价都填 0 或留空";
                 errorText.Visibility = Visibility.Visible;
                 return;
             }
@@ -739,10 +896,14 @@ public partial class MainWindow : Window
         var buttons = new StackPanel
         {
             Orientation = Orientation.Horizontal,
-            HorizontalAlignment = System.Windows.HorizontalAlignment.Right
+            HorizontalAlignment = System.Windows.HorizontalAlignment.Right,
+            Margin = new Thickness(0, 16, 0, 0)
         };
         buttons.Children.Add(okBtn);
         buttons.Children.Add(cancelBtn);
+
+        var topLabel = isFund ? "持仓成本单价" : "成本价";
+        var bottomLabel = isFund ? "持有份额" : "持仓数量";
 
         var stack = new StackPanel { Margin = new Thickness(20) };
         stack.Children.Add(new TextBlock
@@ -753,10 +914,10 @@ public partial class MainWindow : Window
             Margin = new Thickness(0, 0, 0, 12),
             Foreground = new SolidColorBrush(Color.FromRgb(0x1A, 0x1A, 0x1A))
         });
-        stack.Children.Add(new TextBlock { Text = "持仓数量", FontSize = 12, Foreground = new SolidColorBrush(Color.FromRgb(0x66, 0x66, 0x66)) });
-        stack.Children.Add(sharesBox);
-        stack.Children.Add(new TextBlock { Text = "成本价", FontSize = 12, Margin = new Thickness(0, 8, 0, 0), Foreground = new SolidColorBrush(Color.FromRgb(0x66, 0x66, 0x66)) });
+        stack.Children.Add(new TextBlock { Text = topLabel, FontSize = 12, Foreground = new SolidColorBrush(Color.FromRgb(0x66, 0x66, 0x66)) });
         stack.Children.Add(costBox);
+        stack.Children.Add(new TextBlock { Text = bottomLabel, FontSize = 12, Margin = new Thickness(0, 8, 0, 0), Foreground = new SolidColorBrush(Color.FromRgb(0x66, 0x66, 0x66)) });
+        stack.Children.Add(sharesBox);
         stack.Children.Add(errorText);
         stack.Children.Add(buttons);
 
@@ -771,8 +932,8 @@ public partial class MainWindow : Window
         dialog.MouseLeftButtonDown += (_, _) => dialog.DragMove();
         dialog.Loaded += (_, _) =>
         {
-            sharesBox.Focus();
-            sharesBox.SelectAll();
+            costBox.Focus();
+            costBox.SelectAll();
         };
 
         return dialog.ShowDialog() == true ? result : null;

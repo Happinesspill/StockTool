@@ -27,6 +27,10 @@ public class AppConfig
     public string Hotkey { get; set; } = "Ctrl+Shift+S";
     public bool Topmost { get; set; } = true;
     public bool ShowMarketTag { get; set; } = true;
+    /// <summary>持仓截图识别：deepseek | mimo</summary>
+    public string HoldingVisionProvider { get; set; } = "deepseek";
+    public string DeepSeekApiKey { get; set; } = string.Empty;
+    public string MimoApiKey { get; set; } = string.Empty;
 
     /// <summary>旧配置无分组时迁移为「自选」+ 空「港股」「ETF」「基金」；「自选」固定首位。</summary>
     public void EnsureGroupsMigrated()
@@ -86,7 +90,7 @@ public class AppConfig
             SortMode = "default";
         if (SortColumn == "default" && SortMode == "change")
             SortColumn = "change";
-        if (SortColumn is not ("default" or "price" or "change" or "profit" or "turnover" or "turnoverRate" or "speed" or "volumeRatio" or "marketValue"))
+        if (SortColumn is not ("default" or "price" or "change" or "profit" or "holdingAmount" or "turnover" or "turnoverRate" or "speed" or "volumeRatio" or "marketValue"))
             SortColumn = "default";
         if (ListDensity is not ("moderate" or "compact"))
             ListDensity = "moderate";
@@ -200,4 +204,14 @@ public class WatchlistEntry
     public string GroupId { get; set; } = string.Empty;
     public decimal HoldingShares { get; set; }
     public decimal HoldingCost { get; set; }
+}
+
+// 持仓截图导入项
+public class HoldingImportItem
+{
+    public string InternalCode { get; set; } = string.Empty;
+    public string Name { get; set; } = string.Empty;
+    public string Market { get; set; } = string.Empty;
+    public decimal Shares { get; set; }
+    public decimal Cost { get; set; }
 }

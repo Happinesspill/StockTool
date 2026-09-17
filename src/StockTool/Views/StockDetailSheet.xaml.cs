@@ -5,6 +5,7 @@ using System.Windows.Media;
 using System.Windows.Media.Animation;
 using StockTool.Core.Models;
 using StockTool.Data;
+using StockTool.Services;
 using StockTool.ViewModels;
 
 namespace StockTool.Views;
@@ -36,6 +37,12 @@ public partial class StockDetailSheet : UserControl
     private void BtnExpandDetail_Click(object sender, RoutedEventArgs e)
     {
         if (VM == null) return;
+        if (VM.SelectedStock?.IsFund == true)
+        {
+            e.Handled = true;
+            return;
+        }
+
         bool expanding = !VM.IsChartExpanded;
         VM.IsChartExpanded = expanding;
         if (expanding)
@@ -104,6 +111,12 @@ public partial class StockDetailSheet : UserControl
 
     private async Task LoadDetailChartAsync(StockItem stock)
     {
+        if (stock.IsFund)
+        {
+            await LoadFundNavAsync(stock);
+            return;
+        }
+
         if (stock.KlinePeriod == 0)
         {
             if (stock.IntradayPoints.Count == 0)
@@ -113,6 +126,45 @@ public partial class StockDetailSheet : UserControl
 
         if (stock.KlineData.Count == 0)
             await LoadKlineAsync(stock);
+    }
+
+    private async Task LoadFundNavAsync(StockItem stock)
+    {
+        if (VM == null) return;
+        try
+        {
+            var history = await VM.FundNav.GetHistoryAsync(stock.Code);
+            var chart = FundNavService.BuildChart(history, stock.FundNavRange, out _);
+            stock.FundNavChart = chart;
+
+            var markers = VM.GetFundTrades(stock.Code)
+                .Where(t => DateTime.TryParse(t.Date, out _))
+                .Select(t => new FundTradeMarker
+                {
+                    Date = DateTime.Parse(t.Date).Date,
+                    Side = t.Side,
+                    Amount = t.Amount,
+                    Shares = t.Shares
+                })
+                .ToList();
+            stock.FundTradeMarkers = markers;
+
+            if (chart.Count > 0)
+            {
+                stock.FundNavHoverDate = chart[^1].Date.ToString("yyyy-MM-dd");
+                stock.FundNavHoverReturn = $"{chart[^1].ReturnPercent:+0.00;-0.00;0.00}%";
+            }
+            else
+            {
+                stock.FundNavHoverDate = "";
+                stock.FundNavHoverReturn = "";
+            }
+        }
+        catch
+        {
+            stock.FundNavChart = [];
+            stock.FundTradeMarkers = [];
+        }
     }
 
     private async Task LoadIntradayAsync(StockItem stock)
@@ -148,6 +200,7 @@ public partial class StockDetailSheet : UserControl
         if (sender is not FrameworkElement fe) return;
         if (fe.Tag is not string periodStr) return;
         if (VM?.SelectedStock is not { } stock) return;
+        if (stock.IsFund) return;
 
         int period = int.Parse(periodStr);
         if (stock.KlinePeriod == period) return;
@@ -162,5 +215,17 @@ public partial class StockDetailSheet : UserControl
 
         stock.KlineData = [];
         await LoadKlineAsync(stock);
+    }
+
+    private async void FundNavRange_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is not FrameworkElement fe) return;
+        if (fe.Tag is not string range) return;
+        if (VM?.SelectedStock is not { } stock) return;
+        if (!stock.IsFund) return;
+        if (stock.FundNavRange == range) return;
+
+        stock.FundNavRange = range;
+        await LoadFundNavAsync(stock);
     }
 }

@@ -17,41 +17,59 @@ public partial class SettingsWindow : Window
     public string Hotkey { get; private set; }
     public bool IsTopmost { get; private set; }
     public bool ShowMarketTag { get; private set; }
+    public string HoldingVisionProvider { get; private set; } = "deepseek";
+    public string DeepSeekApiKey { get; private set; } = "";
+    public string MimoApiKey { get; private set; } = "";
 
-    public SettingsWindow(double opacity, int fontSize, int refreshInterval, string hotkey, bool topmost, bool showMarketTag, MainViewModel? viewModel = null)
+    public SettingsWindow(
+        double opacity,
+        int fontSize,
+        int refreshInterval,
+        string hotkey,
+        bool topmost,
+        bool showMarketTag,
+        string holdingVisionProvider,
+        string deepSeekApiKey,
+        string mimoApiKey,
+        MainViewModel? viewModel = null)
     {
         _vm = viewModel;
         InitializeComponent();
         DataContext = viewModel;
 
-        // opacity
         OpacityValue = opacity;
         SldOpacity.Value = opacity * 100;
         TxtOpacity.Text = $"{(int)(opacity * 100)}%";
 
-        // font size
         var sizes = new[] { 12, 13, 14, 15, 16, 18, 20 };
         foreach (var s in sizes) CmbFontSize.Items.Add(s);
         CmbFontSize.SelectedItem = fontSize;
         FontSizeValue = fontSize;
 
-        // refresh interval
         var intervals = new[] { 1, 2, 3, 4, 5 };
         foreach (var i in intervals) CmbInterval.Items.Add(i);
         CmbInterval.SelectedItem = refreshInterval;
         RefreshInterval = refreshInterval;
 
-        // hotkey
         Hotkey = hotkey;
         TxtHotkey.Text = hotkey;
 
-        // topmost
         ChkTopmost.IsChecked = topmost;
         IsTopmost = topmost;
 
-        // show market tag
         ChkShowMarketTag.IsChecked = showMarketTag;
         ShowMarketTag = showMarketTag;
+
+        CmbVisionProvider.Items.Add(new ComboBoxItem { Content = "DeepSeek", Tag = "deepseek" });
+        CmbVisionProvider.Items.Add(new ComboBoxItem { Content = "小米 MiMo", Tag = "mimo" });
+        string provider = string.IsNullOrWhiteSpace(holdingVisionProvider) ? "deepseek" : holdingVisionProvider.Trim().ToLowerInvariant();
+        CmbVisionProvider.SelectedIndex = provider == "mimo" ? 1 : 0;
+        HoldingVisionProvider = provider;
+
+        DeepSeekApiKey = deepSeekApiKey ?? "";
+        MimoApiKey = mimoApiKey ?? "";
+        TxtDeepSeekKey.Text = DeepSeekApiKey;
+        TxtMimoKey.Text = MimoApiKey;
 
         _loaded = true;
     }
@@ -98,7 +116,6 @@ public partial class SettingsWindow : Window
         if (key is Key.LeftCtrl or Key.RightCtrl or Key.LeftAlt or Key.RightAlt
             or Key.LeftShift or Key.RightShift or Key.LWin or Key.RWin)
         {
-            // just modifier key alone, ignore
             return;
         }
 
@@ -131,6 +148,11 @@ public partial class SettingsWindow : Window
         RefreshInterval = (int)CmbInterval.SelectedItem;
         IsTopmost = ChkTopmost.IsChecked ?? true;
         ShowMarketTag = ChkShowMarketTag.IsChecked ?? true;
+        HoldingVisionProvider = CmbVisionProvider.SelectedItem is ComboBoxItem { Tag: string tag }
+            ? tag
+            : "deepseek";
+        DeepSeekApiKey = TxtDeepSeekKey.Text.Trim();
+        MimoApiKey = TxtMimoKey.Text.Trim();
         DialogResult = true;
         Close();
     }

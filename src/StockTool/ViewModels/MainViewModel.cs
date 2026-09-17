@@ -20,7 +20,10 @@ public class MainViewModel : INotifyPropertyChanged
     private readonly ConfigStore _configStore;
     private readonly QuoteService _quoteService;
     private readonly IntradayService _intradayService;
+    private readonly FundNavService _fundNavService;
+    private readonly FundDcaService _fundDcaService;
     private AppConfig _config;
+    private FundPortfolioConfig _funds;
 
     public ObservableCollection<StockItem> Stocks { get; } = [];
     public ObservableCollection<StockItem> VisibleStocks { get; } = [];
@@ -31,23 +34,34 @@ public class MainViewModel : INotifyPropertyChanged
     /// <summary>管理窗：已选指数卡片（与 Indices 同源顺序）。</summary>
     public ObservableCollection<IndexItem> SelectedHomeIndices { get; } = [];
     public event Action<string>? AlertTriggered;
-    public decimal HoldingMarketValue => Stocks.Where(s => s.HasHolding).Sum(s => s.MarketValue);
-    public decimal HoldingProfitTotal => Stocks.Where(s => s.HasHolding).Sum(s => s.HoldingProfit);
-    public decimal HoldingTodayProfit => Stocks.Where(s => s.HasHolding).Sum(s => s.TodayHoldingProfit);
+    public decimal HoldingMarketValue => IsFundGroup
+        ? GetDistinctFundHoldings().Sum(s => s.HoldingAmount)
+        : GetDistinctStockHoldings().Sum(s => s.MarketValue);
+    public decimal HoldingProfitTotal => IsFundGroup
+        ? GetDistinctFundHoldings().Sum(s => s.HoldingProfit)
+        : GetDistinctStockHoldings().Sum(s => s.HoldingProfit);
+    public decimal HoldingTodayProfit => IsFundGroup
+        ? GetDistinctFundHoldings().Sum(s => s.TodayHoldingProfit)
+        : GetDistinctStockHoldings().Sum(s => s.TodayHoldingProfit);
+    public string HoldingMarketValueLabel => IsFundGroup ? "基金总持仓" : "持仓市值";
     public string HoldingMarketValueText => FormatMoney(HoldingMarketValue);
     public string HoldingProfitTotalText => $"{HoldingProfitTotal:+0.##;-0.##;0.##}";
     public string HoldingTodayProfitText => $"{HoldingTodayProfit:+0.##;-0.##;0.##}";
 
-    // 今日盈亏悬浮明细：各持仓股今日盈亏与涨跌幅
-    public string HoldingTodayProfitTooltip
+    // 今日盈亏悬浮明细
+    public IReadOnlyList<HoldingTooltipItem> HoldingTodayProfitDetails
     {
         get
         {
-            var holdings = Stocks.Where(s => s.HasHolding).ToList();
-            if (holdings.Count == 0) return "暂无持仓";
+            var holdings = (IsFundGroup ? GetDistinctFundHoldings() : GetDistinctStockHoldings()).ToList();
+            if (holdings.Count == 0)
+                return [new HoldingTooltipItem("暂无持仓", "")];
 
-            return string.Join(Environment.NewLine, holdings.Select(s =>
-                $"{s.DisplayName}  {s.TodayHoldingProfit:+0.##;-0.##;0.##}  {s.ChangePercent:+0.00;-0.00;0.00}%"));
+            return holdings.Select(s => new HoldingTooltipItem(
+                s.DisplayName,
+                s.IsFund && !s.HasFundValuation
+                    ? "--"
+                    : $"{s.TodayHoldingProfit:+0.##;-0.##;0.##}  {s.ChangePercentText}")).ToList();
         }
     }
 
@@ -113,6 +127,12 @@ public class MainViewModel : INotifyPropertyChanged
         set { _config.ShowMarketTag = value; OnPropertyChanged(); }
     }
 
+    public string HoldingVisionProvider =>
+        string.IsNullOrWhiteSpace(_config.HoldingVisionProvider) ? "deepseek" : _config.HoldingVisionProvider;
+
+    public string DeepSeekApiKey => _config.DeepSeekApiKey ?? "";
+    public string MimoApiKey => _config.MimoApiKey ?? "";
+
     public bool IsEditMode
     {
         get => _config.IsEditMode;
@@ -139,13 +159,28 @@ public class MainViewModel : INotifyPropertyChanged
             OnPropertyChanged();
             OnPropertyChanged(nameof(SelectedGroupName));
             OnPropertyChanged(nameof(ShowHoldingColumn));
+            OnPropertyChanged(nameof(ShowHoldingAmountColumn));
+            OnPropertyChanged(nameof(ShowHoldingSummary));
+            OnPropertyChanged(nameof(ShowHoldingSummaryDetails));
+            OnPropertyChanged(nameof(IsHoldingGroupSelected));
             OnPropertyChanged(nameof(ShowTrendColumn));
             OnPropertyChanged(nameof(NameColumnWidth));
             OnPropertyChanged(nameof(IsFundGroup));
             OnPropertyChanged(nameof(EmptyListHint));
             OnPropertyChanged(nameof(PriceColumnHeader));
+            OnPropertyChanged(nameof(HoldingProfitColumnHeader));
+            OnPropertyChanged(nameof(HoldingMarketValueLabel));
+            OnPropertyChanged(nameof(HoldingMarketValueText));
+            OnPropertyChanged(nameof(HoldingProfitTotalText));
+            OnPropertyChanged(nameof(HoldingTodayProfitText));
+            OnPropertyChanged(nameof(HoldingTodayProfitDetails));
             OnPropertyChanged(nameof(StatusSourceText));
             if (!ShowHoldingColumn && string.Equals(SortColumn, "profit", StringComparison.OrdinalIgnoreCase))
+            {
+                SortColumn = "default";
+                SortDescending = true;
+            }
+            if (!ShowHoldingAmountColumn && string.Equals(SortColumn, "holdingAmount", StringComparison.OrdinalIgnoreCase))
             {
                 SortColumn = "default";
                 SortDescending = true;
@@ -159,6 +194,14 @@ public class MainViewModel : INotifyPropertyChanged
 
     public bool ShowHoldingColumn => SelectedGroupId == HoldingGroupId || IsFundGroup;
 
+    // 基金列表：名称后显示持有金额（份额×最新净值）
+    public bool ShowHoldingAmountColumn => IsFundGroup;
+
+    // 持仓/基金页显示汇总栏；其他分组不显示
+    public bool ShowHoldingSummary => SelectedGroupId == HoldingGroupId || IsFundGroup;
+    public bool ShowHoldingSummaryDetails => SelectedGroupId == HoldingGroupId || IsFundGroup;
+    public bool IsHoldingGroupSelected => SelectedGroupId == HoldingGroupId;
+
     // 基金无可用盘中估值走势数据时不展示趋势列
     public bool ShowTrendColumn => !IsFundGroup;
 
@@ -171,7 +214,9 @@ public class MainViewModel : INotifyPropertyChanged
 
     public string EmptyListHint => IsFundGroup ? "当前分组暂无基金" : "当前分组暂无股票";
 
-    public string PriceColumnHeader => IsFundGroup ? "估值/涨幅" : "现价/涨幅";
+    public string PriceColumnHeader => IsFundGroup ? "预估盈利/涨幅" : "现价/涨幅";
+
+    public string HoldingProfitColumnHeader => IsFundGroup ? "持有收益" : "持仓盈亏";
 
     public string StatusSourceText => IsFundGroup ? "数据来源：天天基金 | 仅供参考" : "数据来源：东方财富 | 仅供参考";
 
@@ -230,6 +275,7 @@ public class MainViewModel : INotifyPropertyChanged
     public string SortArrowText => SortColumn == "default" ? "" : (SortDescending ? "▾" : "▴");
     public string ChangeSortArrow => GetSortArrow("change");
     public string ProfitSortArrow => GetSortArrow("profit");
+    public string HoldingAmountSortArrow => GetSortArrow("holdingAmount");
     public string TurnoverSortArrow => GetSortArrow("turnover");
     public string TurnoverRateSortArrow => GetSortArrow("turnoverRate");
     public string SpeedSortArrow => GetSortArrow("speed");
@@ -271,11 +317,16 @@ public class MainViewModel : INotifyPropertyChanged
         _configStore = configStore;
         _config = _configStore.Load();
         _config.EnsureGroupsMigrated();
+        _funds = _configStore.MigrateFundsFromConfig(_config);
         RebuildGroupsCollection();
 
         _config.EnsureHomeIndicesMigrated();
         RebuildIndices();
         RebuildIndexOptions();
+
+        _fundNavService = new FundNavService(eastMoneyClient);
+        _fundDcaService = new FundDcaService(_configStore, _fundNavService, _funds);
+        _fundDcaService.SetHoldingsChangedHandler(SyncFundHoldingsFromConfig);
 
         _quoteService = new QuoteService(eastMoneyClient, Stocks, Indices, () =>
         {
@@ -286,7 +337,7 @@ public class MainViewModel : INotifyPropertyChanged
 
         _intradayService = new IntradayService(eastMoneyClient, Stocks);
 
-        if (_config.Watchlist.Count == 0)
+        if (_config.Watchlist.Count == 0 && _funds.Items.Count == 0)
         {
             _config.Watchlist = GetDefaultWatchlist(_config.SelectedGroupId == HoldingGroupId
                 ? Groups.First(g => g.Name == DefaultGroupName).Id
@@ -295,18 +346,9 @@ public class MainViewModel : INotifyPropertyChanged
         }
 
         foreach (var entry in _config.Watchlist)
-        {
-            Stocks.Add(new StockItem
-            {
-                Name = entry.Name,
-                Code = entry.Code,
-                Market = entry.Market,
-                CustomName = entry.CustomName,
-                GroupId = entry.GroupId,
-                HoldingShares = entry.HoldingShares,
-                HoldingCost = entry.HoldingCost
-            });
-        }
+            Stocks.Add(ToStockItem(entry));
+        foreach (var entry in _funds.Items)
+            Stocks.Add(ToStockItem(entry));
 
         RefreshVisibleStocks();
 
@@ -314,9 +356,84 @@ public class MainViewModel : INotifyPropertyChanged
         _ = _quoteService.RefreshNowAsync();
         _ = _intradayService.LoadAllAsync();
         _intradayService.Start();
+        _fundDcaService.Start();
 
         UpdateTimers();
     }
+
+    public FundNavService FundNav => _fundNavService;
+
+    public IReadOnlyList<TradeRecord> GetFundTrades(string fundCode) =>
+        _funds.Trades
+            .Where(t => string.Equals(t.FundCode, fundCode, StringComparison.OrdinalIgnoreCase))
+            .OrderBy(t => t.Date)
+            .ToList();
+
+    public DcaPlan? GetDcaPlan(string fundCode) =>
+        _funds.DcaPlans.FirstOrDefault(p =>
+            string.Equals(p.FundCode, fundCode, StringComparison.OrdinalIgnoreCase));
+
+    public void SetDcaPlan(string fundCode, decimal amount, bool enabled, DateTime? startDate = null)
+    {
+        var plan = GetDcaPlan(fundCode);
+        if (plan == null)
+        {
+            plan = new DcaPlan
+            {
+                FundCode = fundCode,
+                StartDate = (startDate ?? DateTime.Today).ToString("yyyy-MM-dd")
+            };
+            _funds.DcaPlans.Add(plan);
+        }
+
+        plan.Amount = amount;
+        plan.Enabled = enabled && amount > 0;
+        if (startDate.HasValue)
+            plan.StartDate = startDate.Value.ToString("yyyy-MM-dd");
+        if (string.IsNullOrEmpty(plan.StartDate))
+            plan.StartDate = DateTime.Today.ToString("yyyy-MM-dd");
+
+        _configStore.SaveFunds(_funds);
+        _ = _fundDcaService.CatchUpAsync();
+    }
+
+    private static StockItem ToStockItem(WatchlistEntry entry) => new()
+    {
+        Name = entry.Name,
+        Code = entry.Code,
+        Market = entry.Market,
+        CustomName = entry.CustomName,
+        GroupId = entry.GroupId,
+        HoldingShares = entry.HoldingShares,
+        HoldingCost = entry.HoldingCost
+    };
+
+    private void SyncFundHoldingsFromConfig()
+    {
+        foreach (var entry in _funds.Items)
+        {
+            var stock = Stocks.FirstOrDefault(s =>
+                string.Equals(s.Code, entry.Code, StringComparison.OrdinalIgnoreCase)
+                && string.Equals(s.GroupId, entry.GroupId, StringComparison.OrdinalIgnoreCase));
+            if (stock == null) continue;
+            stock.HoldingShares = entry.HoldingShares;
+            stock.HoldingCost = entry.HoldingCost;
+        }
+
+        OnPropertyChanged(nameof(HoldingMarketValueText));
+        OnPropertyChanged(nameof(HoldingProfitTotalText));
+        OnPropertyChanged(nameof(HoldingTodayProfitText));
+        OnPropertyChanged(nameof(HoldingTodayProfitDetails));
+        RefreshVisibleStocks();
+    }
+
+    private void SaveFunds()
+    {
+        _fundDcaService.SetFunds(_funds);
+        _configStore.SaveFunds(_funds);
+    }
+
+    private bool IsFundStock(StockItem stock) => stock.IsFund;
 
     // 构建展示用分组：自选、持仓（虚拟）、其余
     private void RebuildGroupsCollection()
@@ -391,11 +508,21 @@ public class MainViewModel : INotifyPropertyChanged
         OnPropertyChanged(nameof(SelectedGroupId));
         OnPropertyChanged(nameof(SelectedGroupName));
         OnPropertyChanged(nameof(ShowHoldingColumn));
+        OnPropertyChanged(nameof(ShowHoldingAmountColumn));
+        OnPropertyChanged(nameof(ShowHoldingSummary));
+        OnPropertyChanged(nameof(ShowHoldingSummaryDetails));
+        OnPropertyChanged(nameof(IsHoldingGroupSelected));
         OnPropertyChanged(nameof(ShowTrendColumn));
         OnPropertyChanged(nameof(NameColumnWidth));
         OnPropertyChanged(nameof(IsFundGroup));
         OnPropertyChanged(nameof(EmptyListHint));
         OnPropertyChanged(nameof(PriceColumnHeader));
+        OnPropertyChanged(nameof(HoldingProfitColumnHeader));
+        OnPropertyChanged(nameof(HoldingMarketValueLabel));
+        OnPropertyChanged(nameof(HoldingMarketValueText));
+        OnPropertyChanged(nameof(HoldingProfitTotalText));
+        OnPropertyChanged(nameof(HoldingTodayProfitText));
+        OnPropertyChanged(nameof(HoldingTodayProfitDetails));
         OnPropertyChanged(nameof(StatusSourceText));
         _configStore.Save(_config);
         _ = _quoteService.RefreshNowAsync();
@@ -415,8 +542,8 @@ public class MainViewModel : INotifyPropertyChanged
         OnPropertyChanged(nameof(HoldingMarketValueText));
         OnPropertyChanged(nameof(HoldingProfitTotalText));
         OnPropertyChanged(nameof(HoldingTodayProfitText));
-        OnPropertyChanged(nameof(HoldingTodayProfitTooltip));
-        if (SortColumn != "default")
+        OnPropertyChanged(nameof(HoldingTodayProfitDetails));
+        if (SelectedGroupId == HoldingGroupId || SortColumn != "default")
             RefreshVisibleStocks();
     }
 
@@ -561,16 +688,69 @@ public class MainViewModel : INotifyPropertyChanged
     {
         List<StockItem> filtered;
         if (SelectedGroupId == HoldingGroupId)
-            filtered = Stocks.Where(s => s.HasHolding).ToList();
+        {
+            ConsolidateDuplicateStockHoldings();
+            // 持仓页按代码去重，再按持仓市值从高到低
+            filtered = GetDistinctStockHoldings()
+                .OrderByDescending(s => s.MarketValue)
+                .ThenBy(s => s.DisplayName)
+                .ToList();
+        }
         else
+        {
             filtered = Stocks.Where(s => s.GroupId == SelectedGroupId).ToList();
-        filtered = ApplySort(filtered).ToList();
+            filtered = ApplySort(filtered).ToList();
+        }
 
         VisibleStocks.Clear();
         foreach (var s in filtered)
             VisibleStocks.Add(s);
 
         OnPropertyChanged(nameof(VisibleStocks));
+    }
+
+    // 股票持仓按代码去重（同代码多分组只保留一条）
+    private IEnumerable<StockItem> GetDistinctStockHoldings()
+        => Stocks.Where(s => s.HasHolding && !s.IsFund)
+            .GroupBy(s => s.Code, StringComparer.OrdinalIgnoreCase)
+            .Select(g => g.OrderByDescending(s => s.MarketValue).ThenBy(s => s.DisplayName).First());
+
+    private IEnumerable<StockItem> GetDistinctFundHoldings()
+        => Stocks.Where(s => s.IsFund && s.HasHolding)
+            .GroupBy(s => s.Code, StringComparer.OrdinalIgnoreCase)
+            .Select(g => g.OrderByDescending(s => s.HoldingAmount).ThenBy(s => s.DisplayName).First());
+
+    // 同代码多条持仓时只保留市值最高的一条
+    private void ConsolidateDuplicateStockHoldings()
+    {
+        var dupGroups = Stocks
+            .Where(s => s.HasHolding && !s.IsFund)
+            .GroupBy(s => s.Code, StringComparer.OrdinalIgnoreCase)
+            .Where(g => g.Count() > 1)
+            .ToList();
+        if (dupGroups.Count == 0) return;
+
+        bool changed = false;
+        foreach (var g in dupGroups)
+        {
+            var keep = g.OrderByDescending(s => s.MarketValue).ThenBy(s => s.DisplayName).First();
+            foreach (var s in g)
+            {
+                if (ReferenceEquals(s, keep)) continue;
+                s.HoldingShares = 0;
+                s.HoldingCost = 0;
+                int cfgIndex = FindWatchlistIndex(s);
+                if (cfgIndex >= 0)
+                {
+                    _config.Watchlist[cfgIndex].HoldingShares = 0;
+                    _config.Watchlist[cfgIndex].HoldingCost = 0;
+                    changed = true;
+                }
+            }
+        }
+
+        if (changed)
+            _configStore.Save(_config);
     }
 
     public static bool IsFixedGroup(WatchlistGroup group) =>
@@ -622,6 +802,7 @@ public class MainViewModel : INotifyPropertyChanged
     {
         OnPropertyChanged(nameof(ChangeSortArrow));
         OnPropertyChanged(nameof(ProfitSortArrow));
+        OnPropertyChanged(nameof(HoldingAmountSortArrow));
         OnPropertyChanged(nameof(TurnoverSortArrow));
         OnPropertyChanged(nameof(TurnoverRateSortArrow));
         OnPropertyChanged(nameof(SpeedSortArrow));
@@ -727,18 +908,139 @@ public class MainViewModel : INotifyPropertyChanged
             Market = market,
             GroupId = groupId
         };
-        _config.Watchlist.Add(entry);
-        _configStore.Save(_config);
 
-        Stocks.Add(new StockItem
+        if (ConfigStore.IsFundEntry(entry) || IsFundGroup)
         {
-            Name = name,
-            Code = code,
-            Market = market,
-            GroupId = groupId
-        });
+            if (!entry.Code.StartsWith("FD", StringComparison.OrdinalIgnoreCase))
+                entry.Code = EastMoneyClient.ToFundInternalCode(entry.Code);
+            entry.Market = "基金";
+            string fundGroupId = Groups.FirstOrDefault(g => g.Name == FundGroupName)?.Id ?? groupId;
+            if (IsFundGroup)
+                entry.GroupId = fundGroupId;
+            _funds.Items.Add(entry);
+            SaveFunds();
+        }
+        else
+        {
+            _config.Watchlist.Add(entry);
+            _configStore.Save(_config);
+        }
+
+        Stocks.Add(ToStockItem(entry));
         RefreshVisibleStocks();
         _ = _intradayService.LoadAllAsync();
+    }
+
+    // 按截图合并持仓：已有则更新数量/成本，没有则加入自选并写入持仓；不删除原持仓
+    public int SyncHoldingsFromImport(IReadOnlyList<HoldingImportItem> items)
+    {
+        if (items.Count == 0) return 0;
+
+        string defaultGroupId = Groups.FirstOrDefault(g => g.Name == DefaultGroupName)?.Id
+            ?? Groups.FirstOrDefault(g => g.Id != HoldingGroupId)?.Id
+            ?? string.Empty;
+
+        int synced = 0;
+        bool watchlistChanged = false;
+
+        foreach (var item in items)
+        {
+            if (string.IsNullOrWhiteSpace(item.InternalCode) || item.Shares <= 0 || item.Cost <= 0)
+                continue;
+
+            var existing = Stocks.FirstOrDefault(s =>
+                !s.IsFund
+                && string.Equals(s.Code, item.InternalCode, StringComparison.OrdinalIgnoreCase));
+
+            if (existing is null)
+            {
+                var entry = new WatchlistEntry
+                {
+                    Code = item.InternalCode,
+                    Name = item.Name,
+                    Market = item.Market,
+                    GroupId = defaultGroupId,
+                    HoldingShares = item.Shares,
+                    HoldingCost = item.Cost
+                };
+                _config.Watchlist.Add(entry);
+                Stocks.Add(ToStockItem(entry));
+                watchlistChanged = true;
+                synced++;
+                continue;
+            }
+
+            existing.HoldingShares = item.Shares;
+            existing.HoldingCost = item.Cost;
+            int cfgIndex = FindWatchlistIndex(existing);
+            if (cfgIndex >= 0)
+            {
+                _config.Watchlist[cfgIndex].HoldingShares = item.Shares;
+                _config.Watchlist[cfgIndex].HoldingCost = item.Cost;
+                watchlistChanged = true;
+            }
+            if (ClearOtherStockHoldings(existing))
+                watchlistChanged = true;
+            synced++;
+        }
+
+        if (watchlistChanged)
+            _configStore.Save(_config);
+
+        OnPropertyChanged(nameof(HoldingMarketValueText));
+        OnPropertyChanged(nameof(HoldingProfitTotalText));
+        OnPropertyChanged(nameof(HoldingTodayProfitText));
+        OnPropertyChanged(nameof(HoldingTodayProfitDetails));
+        RefreshVisibleStocks();
+        _ = _intradayService.LoadAllAsync();
+        return synced;
+    }
+
+    // 按基金详情截图合并持仓：已有则更新份额/成本单价，没有则加入基金组；不删除原持仓
+    public int SyncFundHoldingsFromImport(IReadOnlyList<HoldingImportItem> items)
+    {
+        if (items.Count == 0) return 0;
+
+        string fundGroupId = Groups.FirstOrDefault(g => g.Name == FundGroupName)?.Id
+            ?? Groups.FirstOrDefault(g => g.Id != HoldingGroupId)?.Id
+            ?? string.Empty;
+
+        int synced = 0;
+
+        foreach (var item in items)
+        {
+            if (string.IsNullOrWhiteSpace(item.InternalCode) || item.Shares <= 0 || item.Cost <= 0)
+                continue;
+
+            string code = item.InternalCode.StartsWith("FD", StringComparison.OrdinalIgnoreCase)
+                ? item.InternalCode
+                : EastMoneyClient.ToFundInternalCode(item.InternalCode);
+
+            var existing = Stocks.FirstOrDefault(s =>
+                s.IsFund
+                && string.Equals(s.Code, code, StringComparison.OrdinalIgnoreCase));
+
+            if (existing is null)
+            {
+                var entry = new WatchlistEntry
+                {
+                    Code = code,
+                    Name = item.Name,
+                    Market = string.IsNullOrWhiteSpace(item.Market) ? "基金" : item.Market,
+                    GroupId = fundGroupId
+                };
+                _funds.Items.Add(entry);
+                Stocks.Add(ToStockItem(entry));
+                existing = Stocks.First(s =>
+                    s.IsFund
+                    && string.Equals(s.Code, code, StringComparison.OrdinalIgnoreCase));
+            }
+
+            SetHolding(existing, item.Shares, item.Cost);
+            synced++;
+        }
+
+        return synced;
     }
 
     public void RemoveStock(StockItem stock)
@@ -750,13 +1052,23 @@ public class MainViewModel : INotifyPropertyChanged
             SelectedStock = null;
 
         Stocks.RemoveAt(index);
-        int cfgIndex = FindWatchlistIndex(stock);
-        if (cfgIndex >= 0)
-            _config.Watchlist.RemoveAt(cfgIndex);
-        else if (index < _config.Watchlist.Count)
-            _config.Watchlist.RemoveAt(index);
+        if (IsFundStock(stock))
+        {
+            int fundIndex = FindFundIndex(stock);
+            if (fundIndex >= 0)
+                _funds.Items.RemoveAt(fundIndex);
+            _funds.DcaPlans.RemoveAll(p =>
+                string.Equals(p.FundCode, stock.Code, StringComparison.OrdinalIgnoreCase));
+            SaveFunds();
+        }
+        else
+        {
+            int cfgIndex = FindWatchlistIndex(stock);
+            if (cfgIndex >= 0)
+                _config.Watchlist.RemoveAt(cfgIndex);
+            _configStore.Save(_config);
+        }
 
-        _configStore.Save(_config);
         RefreshVisibleStocks();
     }
 
@@ -766,10 +1078,23 @@ public class MainViewModel : INotifyPropertyChanged
         if (index < 0) return;
 
         stock.CustomName = customName;
-        int cfgIndex = FindWatchlistIndex(stock);
-        if (cfgIndex >= 0)
-            _config.Watchlist[cfgIndex].CustomName = customName;
-        _configStore.Save(_config);
+        if (IsFundStock(stock))
+        {
+            int fundIndex = FindFundIndex(stock);
+            if (fundIndex >= 0)
+                _funds.Items[fundIndex].CustomName = customName;
+            SaveFunds();
+        }
+        else
+        {
+            int cfgIndex = FindWatchlistIndex(stock);
+            if (cfgIndex >= 0)
+                _config.Watchlist[cfgIndex].CustomName = customName;
+            _configStore.Save(_config);
+        }
+
+        if (ReferenceEquals(SelectedStock, stock))
+            OnPropertyChanged(nameof(SelectedStock));
     }
 
     public void SetHolding(StockItem stock, decimal shares, decimal cost)
@@ -780,19 +1105,75 @@ public class MainViewModel : INotifyPropertyChanged
         stock.HoldingShares = shares;
         stock.HoldingCost = cost;
 
-        int cfgIndex = FindWatchlistIndex(stock);
-        if (cfgIndex >= 0)
+        if (IsFundStock(stock))
         {
-            _config.Watchlist[cfgIndex].HoldingShares = shares;
-            _config.Watchlist[cfgIndex].HoldingCost = cost;
+            int fundIndex = FindFundIndex(stock);
+            if (fundIndex >= 0)
+            {
+                _funds.Items[fundIndex].HoldingShares = shares;
+                _funds.Items[fundIndex].HoldingCost = cost;
+            }
+
+            _funds.Trades.RemoveAll(t =>
+                string.Equals(t.FundCode, stock.Code, StringComparison.OrdinalIgnoreCase)
+                && t.Source == TradeSource.Manual);
+
+            if (shares > 0 && cost > 0)
+            {
+                _funds.Trades.Add(new TradeRecord
+                {
+                    FundCode = stock.Code,
+                    Date = DateTime.Today.ToString("yyyy-MM-dd"),
+                    Side = TradeSide.Buy,
+                    Amount = shares * cost,
+                    Shares = shares,
+                    Nav = cost,
+                    Source = TradeSource.Manual
+                });
+            }
+
+            SaveFunds();
+        }
+        else
+        {
+            int cfgIndex = FindWatchlistIndex(stock);
+            if (cfgIndex >= 0)
+            {
+                _config.Watchlist[cfgIndex].HoldingShares = shares;
+                _config.Watchlist[cfgIndex].HoldingCost = cost;
+            }
+            ClearOtherStockHoldings(stock);
             _configStore.Save(_config);
         }
 
         OnPropertyChanged(nameof(HoldingMarketValueText));
         OnPropertyChanged(nameof(HoldingProfitTotalText));
         OnPropertyChanged(nameof(HoldingTodayProfitText));
-        OnPropertyChanged(nameof(HoldingTodayProfitTooltip));
+        OnPropertyChanged(nameof(HoldingTodayProfitDetails));
         RefreshVisibleStocks();
+    }
+
+    // 清除同代码其它条目上的持仓，避免持仓页重复
+    private bool ClearOtherStockHoldings(StockItem keep)
+    {
+        bool changed = false;
+        foreach (var s in Stocks)
+        {
+            if (s.IsFund || ReferenceEquals(s, keep)) continue;
+            if (!string.Equals(s.Code, keep.Code, StringComparison.OrdinalIgnoreCase)) continue;
+            if (!s.HasHolding && s.HoldingShares == 0 && s.HoldingCost == 0) continue;
+
+            s.HoldingShares = 0;
+            s.HoldingCost = 0;
+            int cfgIndex = FindWatchlistIndex(s);
+            if (cfgIndex >= 0)
+            {
+                _config.Watchlist[cfgIndex].HoldingShares = 0;
+                _config.Watchlist[cfgIndex].HoldingCost = 0;
+                changed = true;
+            }
+        }
+        return changed;
     }
 
     public void MoveStockUp(StockItem stock)
@@ -841,12 +1222,23 @@ public class MainViewModel : INotifyPropertyChanged
         int index = Stocks.IndexOf(stock);
         if (index < 0 || stock.GroupId == groupId) return false;
 
-        int cfgIndex = FindWatchlistIndex(stock);
-        stock.GroupId = groupId;
-        if (cfgIndex >= 0)
-            _config.Watchlist[cfgIndex].GroupId = groupId;
+        if (IsFundStock(stock))
+        {
+            int fundIndex = FindFundIndex(stock);
+            stock.GroupId = groupId;
+            if (fundIndex >= 0)
+                _funds.Items[fundIndex].GroupId = groupId;
+            SaveFunds();
+        }
+        else
+        {
+            int cfgIndex = FindWatchlistIndex(stock);
+            stock.GroupId = groupId;
+            if (cfgIndex >= 0)
+                _config.Watchlist[cfgIndex].GroupId = groupId;
+            _configStore.Save(_config);
+        }
 
-        _configStore.Save(_config);
         RefreshVisibleStocks();
         return true;
     }
@@ -858,7 +1250,7 @@ public class MainViewModel : INotifyPropertyChanged
         if (Groups.All(g => g.Id != groupId)) return false;
         if (HasStockInGroup(stock.Code, groupId)) return false;
 
-        _config.Watchlist.Add(new WatchlistEntry
+        var entry = new WatchlistEntry
         {
             Code = stock.Code,
             Name = stock.Name,
@@ -867,7 +1259,19 @@ public class MainViewModel : INotifyPropertyChanged
             GroupId = groupId,
             HoldingShares = stock.HoldingShares,
             HoldingCost = stock.HoldingCost
-        });
+        };
+
+        if (IsFundStock(stock) || ConfigStore.IsFundEntry(entry))
+        {
+            _funds.Items.Add(entry);
+            SaveFunds();
+        }
+        else
+        {
+            _config.Watchlist.Add(entry);
+            _configStore.Save(_config);
+        }
+
         Stocks.Add(new StockItem
         {
             Name = stock.Name,
@@ -881,7 +1285,6 @@ public class MainViewModel : INotifyPropertyChanged
             ChangePercent = stock.ChangePercent,
             YesterdayClose = stock.YesterdayClose
         });
-        _configStore.Save(_config);
         _ = _intradayService.LoadAllAsync();
         return true;
     }
@@ -914,21 +1317,42 @@ public class MainViewModel : INotifyPropertyChanged
         if (from < 0 || to < 0) return;
 
         Stocks.Move(from, to);
-        var item = _config.Watchlist[from];
-        _config.Watchlist.RemoveAt(from);
-        _config.Watchlist.Insert(to, item);
-        _configStore.Save(_config);
+
+        if (IsFundStock(dragged))
+        {
+            int fromFund = FindFundIndex(dragged);
+            int toFund = FindFundIndex(target);
+            if (fromFund >= 0 && toFund >= 0)
+            {
+                var item = _funds.Items[fromFund];
+                _funds.Items.RemoveAt(fromFund);
+                _funds.Items.Insert(toFund, item);
+                SaveFunds();
+            }
+        }
+        else
+        {
+            int fromCfg = FindWatchlistIndex(dragged);
+            int toCfg = FindWatchlistIndex(target);
+            if (fromCfg >= 0 && toCfg >= 0)
+            {
+                var item = _config.Watchlist[fromCfg];
+                _config.Watchlist.RemoveAt(fromCfg);
+                _config.Watchlist.Insert(toCfg, item);
+                _configStore.Save(_config);
+            }
+        }
+
         RefreshVisibleStocks();
     }
 
     private int FindWatchlistIndex(StockItem stock)
     {
-        int index = Stocks.IndexOf(stock);
-        if (index >= 0 && index < _config.Watchlist.Count && ReferenceMatches(_config.Watchlist[index], stock))
-            return index;
-
         return _config.Watchlist.FindIndex(e => ReferenceMatches(e, stock));
     }
+
+    private int FindFundIndex(StockItem stock) =>
+        _funds.Items.FindIndex(e => ReferenceMatches(e, stock));
 
     private static bool ReferenceMatches(WatchlistEntry entry, StockItem stock) =>
         string.Equals(entry.Code, stock.Code, StringComparison.OrdinalIgnoreCase)
@@ -941,6 +1365,7 @@ public class MainViewModel : INotifyPropertyChanged
             "price" => s => s.CurrentPrice,
             "change" => s => s.ChangePercent,
             "profit" => s => s.HoldingProfit,
+            "holdingAmount" => s => s.HoldingAmount,
             "turnover" => s => s.Turnover,
             "turnoverRate" => s => s.TurnoverRate,
             "speed" => s => s.Speed,
@@ -966,7 +1391,16 @@ public class MainViewModel : INotifyPropertyChanged
         _configStore.Save(_config);
     }
 
-    public void SaveSettings(double opacity, int fontSize, int refreshInterval, string hotkey, bool topmost, bool showMarketTag)
+    public void SaveSettings(
+        double opacity,
+        int fontSize,
+        int refreshInterval,
+        string hotkey,
+        bool topmost,
+        bool showMarketTag,
+        string holdingVisionProvider,
+        string deepSeekApiKey,
+        string mimoApiKey)
     {
         _config.Opacity = opacity;
         _config.FontSize = fontSize;
@@ -974,6 +1408,11 @@ public class MainViewModel : INotifyPropertyChanged
         _config.Hotkey = hotkey;
         _config.Topmost = topmost;
         _config.ShowMarketTag = showMarketTag;
+        _config.HoldingVisionProvider = string.IsNullOrWhiteSpace(holdingVisionProvider)
+            ? "deepseek"
+            : holdingVisionProvider.Trim().ToLowerInvariant();
+        _config.DeepSeekApiKey = deepSeekApiKey ?? "";
+        _config.MimoApiKey = mimoApiKey ?? "";
         _configStore.Save(_config);
 
         OnPropertyChanged(nameof(Opacity));
@@ -984,6 +1423,18 @@ public class MainViewModel : INotifyPropertyChanged
         OnPropertyChanged(nameof(ShowMarketTag));
 
         UpdateTimers();
+    }
+
+    // 获取持仓截图识别配置；未配置 Key 时返回 null
+    public HoldingVisionOptions? GetHoldingVisionOptions()
+    {
+        string provider = string.IsNullOrWhiteSpace(_config.HoldingVisionProvider)
+            ? "deepseek"
+            : _config.HoldingVisionProvider.Trim().ToLowerInvariant();
+        string key = provider == "mimo" ? _config.MimoApiKey : _config.DeepSeekApiKey;
+        if (string.IsNullOrWhiteSpace(key))
+            return null;
+        return new HoldingVisionOptions { Provider = provider, ApiKey = key.Trim() };
     }
 
     public void UpdateTimers()
@@ -1010,3 +1461,6 @@ public class MainViewModel : INotifyPropertyChanged
     protected void OnPropertyChanged([CallerMemberName] string? name = null)
         => PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(name));
 }
+
+// 今日盈亏提示行
+public sealed record HoldingTooltipItem(string Name, string ChangeText);

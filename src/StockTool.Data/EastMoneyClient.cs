@@ -607,7 +607,7 @@ public class EastMoneyClient
         }
     }
 
-    // ── 天天基金实时估值 ─────────────────────────────
+    // ── 天天基金实时估值（无估值时回退新浪 fu_） ─────
 
     public async Task<List<QuoteItem>> GetFundValuationsAsync(IReadOnlyList<string> internalCodes)
     {
@@ -626,13 +626,46 @@ public class EastMoneyClient
             $"https://fundcomapi.eastmoney.com/mm/newCore/FundValuationLast?{query}"
         ];
 
+        List<QuoteItem> list = [];
         foreach (var url in urls)
         {
-            var list = await FetchFundValuationAsync(url);
-            if (list.Count > 0) return list;
+            list = await FetchFundValuationAsync(url);
+            if (list.Count > 0) break;
         }
 
-        return [];
+        var byCode = new Dictionary<string, QuoteItem>(StringComparer.OrdinalIgnoreCase);
+        foreach (var item in list)
+        {
+            if (!string.IsNullOrEmpty(item.F12))
+                byCode[item.F12] = item;
+        }
+
+        var needSina = codes
+            .Where(c => !byCode.TryGetValue(c, out var q) || !q.HasEstimate)
+            .ToList();
+        if (needSina.Count == 0) return list;
+
+        var sinaList = await FetchSinaFundValuationsAsync(needSina);
+        foreach (var sina in sinaList)
+        {
+            if (string.IsNullOrEmpty(sina.F12) || !sina.HasEstimate) continue;
+            if (byCode.TryGetValue(sina.F12, out var existing))
+            {
+                existing.F2 = sina.F2;
+                existing.F3 = sina.F3;
+                existing.HasEstimate = true;
+                if (sina.F17 > 0) existing.F17 = sina.F17;
+                if (!string.IsNullOrEmpty(sina.F14) && string.IsNullOrEmpty(existing.F14))
+                    existing.F14 = sina.F14;
+            }
+            else
+            {
+                byCode[sina.F12] = sina;
+                list.Add(sina);
+            }
+        }
+
+        return list;
     }
 
     private async Task<List<QuoteItem>> FetchFundValuationAsync(string url)
@@ -651,15 +684,17 @@ public class EastMoneyClient
             foreach (var item in response.Data)
             {
                 if (string.IsNullOrEmpty(item.FCODE)) continue;
-                decimal price = item.GSZ > 0 ? item.GSZ : item.NAV;
-                decimal pct = item.GSZ > 0 ? item.GSZZL : 0;
+                bool hasEstimate = item.GSZ > 0;
+                decimal price = hasEstimate ? item.GSZ : item.NAV;
+                decimal pct = hasEstimate ? item.GSZZL : 0;
                 result.Add(new QuoteItem
                 {
                     F2 = price,
                     F3 = pct,
                     F12 = item.FCODE,
                     F14 = item.SHORTNAME,
-                    F17 = item.NAV
+                    F17 = item.NAV,
+                    HasEstimate = hasEstimate
                 });
             }
             return result;
@@ -668,6 +703,128 @@ public class EastMoneyClient
         {
             return [];
         }
+    }
+
+    // 新浪开放式基金估值：fu_代码 = 名称,时间,估值,净值,累计净值,涨跌额?,涨跌幅,日期,...
+    private async Task<List<QuoteItem>> FetchSinaFundValuationsAsync(IReadOnlyList<string> fundCodes)
+    {
+        var result = new List<QuoteItem>();
+        if (fundCodes.Count == 0) return result;
+
+        const int batchSize = 40;
+        for (int i = 0; i < fundCodes.Count; i += batchSize)
+        {
+            var batch = fundCodes.Skip(i).Take(batchSize).ToList();
+            string list = string.Join(",", batch.Select(c => $"fu_{c}"));
+            string url = $"https://hq.sinajs.cn/list={list}";
+            try
+            {
+                using var req = new HttpRequestMessage(HttpMethod.Get, url);
+                req.Headers.TryAddWithoutValidation("Referer", "https://finance.sina.com.cn/");
+                using var resp = await _http.SendAsync(req);
+                if (!resp.IsSuccessStatusCode) continue;
+
+                var bytes = await resp.Content.ReadAsByteArrayAsync();
+                string text;
+                try { text = System.Text.Encoding.GetEncoding("GBK").GetString(bytes); }
+                catch { text = System.Text.Encoding.UTF8.GetString(bytes); }
+
+                foreach (var segment in text.Split(';', StringSplitOptions.RemoveEmptyEntries))
+                {
+                    int eq = segment.IndexOf('=');
+                    if (eq < 0) continue;
+                    string varName = segment[..eq].Trim();
+                    string payload = segment[(eq + 1)..].Trim().Trim('"');
+                    if (string.IsNullOrWhiteSpace(payload)) continue;
+
+                    int fu = varName.LastIndexOf("fu_", StringComparison.OrdinalIgnoreCase);
+                    if (fu < 0) continue;
+                    string code = varName[(fu + 3)..].Trim();
+                    if (string.IsNullOrEmpty(code)) continue;
+
+                    var f = payload.Split(',');
+                    // 名称,时间,估值,净值,累计净值,?,涨跌幅%,日期
+                    if (f.Length < 7) continue;
+                    if (!decimal.TryParse(f[2], System.Globalization.NumberStyles.Any,
+                            System.Globalization.CultureInfo.InvariantCulture, out var gsz) || gsz <= 0)
+                        continue;
+                    if (!decimal.TryParse(f[6], System.Globalization.NumberStyles.Any,
+                            System.Globalization.CultureInfo.InvariantCulture, out var gszzl))
+                        gszzl = 0;
+                    decimal.TryParse(f[3], System.Globalization.NumberStyles.Any,
+                        System.Globalization.CultureInfo.InvariantCulture, out var nav);
+
+                    result.Add(new QuoteItem
+                    {
+                        F2 = gsz,
+                        F3 = gszzl,
+                        F12 = code,
+                        F14 = f[0],
+                        F17 = nav,
+                        HasEstimate = true
+                    });
+                }
+            }
+            catch
+            {
+                // 单批失败则跳过
+            }
+        }
+
+        return result;
+    }
+
+    // ── 基金历史净值 ─────────────────────────────────
+
+    public async Task<List<FundNavPoint>> GetFundNavHistoryAsync(string fundCode, int maxPages = 40)
+    {
+        string code = IsFundCode(fundCode) ? fundCode[2..] : fundCode;
+        if (string.IsNullOrWhiteSpace(code)) return [];
+
+        var all = new List<FundNavPoint>();
+        try
+        {
+            for (int page = 1; page <= maxPages; page++)
+            {
+                string url = "https://api.fund.eastmoney.com/f10/lsjz"
+                    + $"?fundCode={Uri.EscapeDataString(code)}"
+                    + $"&pageIndex={page}&pageSize=20&startDate=&endDate=";
+
+                using var req = new HttpRequestMessage(HttpMethod.Get, url);
+                req.Headers.TryAddWithoutValidation("Referer", $"https://fundf10.eastmoney.com/jjjz_{code}.html");
+                using var resp = await _http.SendAsync(req);
+                if (!resp.IsSuccessStatusCode) break;
+
+                var response = await resp.Content.ReadFromJsonAsync<FundNavHistoryResponse>(JsonOpts);
+                var list = response?.Data?.LSJZList;
+                if (list == null || list.Count == 0) break;
+
+                foreach (var item in list)
+                {
+                    if (string.IsNullOrEmpty(item.FSRQ) || item.DWJZ <= 0) continue;
+                    all.Add(new FundNavPoint
+                    {
+                        Date = item.FSRQ,
+                        Nav = item.DWJZ,
+                        AccNav = item.LJJZ,
+                        ChangePercent = item.JZZZL
+                    });
+                }
+
+                int total = response?.TotalCount ?? 0;
+                if (page * 20 >= total) break;
+            }
+        }
+        catch
+        {
+            return all.OrderBy(p => p.Date).ToList();
+        }
+
+        return all
+            .GroupBy(p => p.Date)
+            .Select(g => g.First())
+            .OrderBy(p => p.Date)
+            .ToList();
     }
 
     // ── K-line (Tencent API) ──────────────────────────

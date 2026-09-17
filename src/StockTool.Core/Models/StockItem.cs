@@ -7,6 +7,7 @@ public class StockItem : INotifyPropertyChanged
 {
     private string _name = string.Empty;
     private string _customName = string.Empty;
+    private string _displayName = string.Empty;
     private string _code = string.Empty;
     private string _market = string.Empty;
     private string _groupId = string.Empty;
@@ -25,26 +26,52 @@ public class StockItem : INotifyPropertyChanged
     private decimal _floatMarketValue;
     private decimal _holdingShares;
     private decimal _holdingCost;
+    private bool _hasFundValuation;
     private List<decimal> _intradayPoints = [];
     private List<decimal> _intradayAvgPoints = [];
     private List<string> _intradayTimes = [];
     private List<KlineItem> _klineData = [];
     /// <summary>0=分时（当日走势），其余为东财 klt：5/15/30/60/101/102</summary>
     private int _klinePeriod = 0;
+    private string _fundNavRange = "3m";
+    private List<FundNavChartPoint> _fundNavChart = [];
+    private List<FundTradeMarker> _fundTradeMarkers = [];
+    private string _fundNavHoverDate = "";
+    private string _fundNavHoverReturn = "";
 
     public string Name
     {
         get => _name;
-        set { _name = value; OnPropertyChanged(); OnPropertyChanged(nameof(DisplayName)); }
+        set
+        {
+            if (_name == value) return;
+            _name = value;
+            OnPropertyChanged();
+            RefreshDisplayName();
+        }
     }
 
     public string CustomName
     {
         get => _customName;
-        set { _customName = value; OnPropertyChanged(); OnPropertyChanged(nameof(DisplayName)); }
+        set
+        {
+            if (_customName == value) return;
+            _customName = value;
+            OnPropertyChanged();
+            RefreshDisplayName();
+        }
     }
 
-    public string DisplayName => string.IsNullOrWhiteSpace(_customName) ? _name : _customName;
+    public string DisplayName => _displayName;
+
+    private void RefreshDisplayName()
+    {
+        string next = string.IsNullOrWhiteSpace(_customName) ? _name : _customName;
+        if (_displayName == next) return;
+        _displayName = next;
+        OnPropertyChanged(nameof(DisplayName));
+    }
 
     public string Code
     {
@@ -129,24 +156,64 @@ public class StockItem : INotifyPropertyChanged
             OnPropertyChanged(nameof(HoldingProfit));
             OnPropertyChanged(nameof(HoldingProfitPercent));
             OnPropertyChanged(nameof(TodayHoldingProfit));
+            OnPropertyChanged(nameof(TodayEstimateProfitText));
             OnPropertyChanged(nameof(MarketValue));
+            OnPropertyChanged(nameof(HoldingAmount));
+            OnPropertyChanged(nameof(HoldingAmountText));
+            OnPropertyChanged(nameof(HoldingListMarketValueText));
         }
     }
 
     public decimal ChangePercent
     {
         get => _changePercent;
-        set { _changePercent = value; OnPropertyChanged(); OnPropertyChanged(nameof(IsUp)); }
+        set
+        {
+            _changePercent = value;
+            OnPropertyChanged();
+            OnPropertyChanged(nameof(IsUp));
+            OnPropertyChanged(nameof(ChangePercentText));
+        }
     }
 
     public bool IsUp => _changePercent >= 0;
 
     public string PriceText => IsFund ? $"{_currentPrice:F4}" : $"{_currentPrice:F2}";
 
+    // 基金是否拿到盘中估算净值
+    public bool HasFundValuation
+    {
+        get => _hasFundValuation;
+        set
+        {
+            if (_hasFundValuation == value) return;
+            _hasFundValuation = value;
+            OnPropertyChanged();
+            OnPropertyChanged(nameof(ChangePercentText));
+            OnPropertyChanged(nameof(TodayEstimateProfitText));
+        }
+    }
+
+    public string ChangePercentText =>
+        IsFund && !_hasFundValuation
+            ? "--"
+            : $"{_changePercent:+0.00;-0.00;0.00}%";
+
     public decimal YesterdayClose
     {
         get => _yesterdayClose;
-        set { _yesterdayClose = value; OnPropertyChanged(); OnPropertyChanged(nameof(TodayHoldingProfit)); }
+        set
+        {
+            _yesterdayClose = value;
+            OnPropertyChanged();
+            OnPropertyChanged(nameof(TodayHoldingProfit));
+            OnPropertyChanged(nameof(TodayEstimateProfitText));
+            OnPropertyChanged(nameof(HoldingAmount));
+            OnPropertyChanged(nameof(HoldingAmountText));
+            OnPropertyChanged(nameof(HoldingProfit));
+            OnPropertyChanged(nameof(HoldingProfitPercent));
+            OnPropertyChanged(nameof(HoldingListMarketValueText));
+        }
     }
 
     public decimal Open
@@ -252,7 +319,11 @@ public class StockItem : INotifyPropertyChanged
             OnPropertyChanged(nameof(HoldingProfit));
             OnPropertyChanged(nameof(HoldingProfitPercent));
             OnPropertyChanged(nameof(TodayHoldingProfit));
+            OnPropertyChanged(nameof(TodayEstimateProfitText));
             OnPropertyChanged(nameof(MarketValue));
+            OnPropertyChanged(nameof(HoldingAmount));
+            OnPropertyChanged(nameof(HoldingAmountText));
+            OnPropertyChanged(nameof(HoldingListMarketValueText));
         }
     }
 
@@ -266,22 +337,44 @@ public class StockItem : INotifyPropertyChanged
             OnPropertyChanged(nameof(HasHolding));
             OnPropertyChanged(nameof(HoldingProfit));
             OnPropertyChanged(nameof(HoldingProfitPercent));
+            OnPropertyChanged(nameof(TodayEstimateProfitText));
+            OnPropertyChanged(nameof(HoldingAmount));
+            OnPropertyChanged(nameof(HoldingAmountText));
+            OnPropertyChanged(nameof(HoldingListMarketValueText));
         }
     }
 
     public bool HasHolding => _holdingShares > 0 && _holdingCost > 0;
 
-    public decimal HoldingProfit => HasHolding ? (_currentPrice - _holdingCost) * _holdingShares : 0;
+    // 基金盈亏按最新净值；股票按现价
+    private decimal HoldingMarkPrice => IsFund && _yesterdayClose > 0 ? _yesterdayClose : _currentPrice;
+
+    public decimal HoldingProfit => HasHolding ? (HoldingMarkPrice - _holdingCost) * _holdingShares : 0;
 
     public decimal HoldingProfitPercent => HasHolding && _holdingCost > 0
-        ? (_currentPrice - _holdingCost) / _holdingCost * 100m
+        ? (HoldingMarkPrice - _holdingCost) / _holdingCost * 100m
         : 0;
 
-    public decimal TodayHoldingProfit => HasHolding && _yesterdayClose > 0
-        ? (_currentPrice - _yesterdayClose) * _holdingShares
-        : 0;
+    // 按估值相对净值估算今日盈利
+    public decimal TodayHoldingProfit =>
+        HasHolding && _yesterdayClose > 0 && (!IsFund || _hasFundValuation)
+            ? (_currentPrice - _yesterdayClose) * _holdingShares
+            : 0;
+
+    public string TodayEstimateProfitText =>
+        !HasHolding || (IsFund && !_hasFundValuation)
+            ? "--"
+            : $"{TodayHoldingProfit:+0.##;-0.##;0.##}";
 
     public decimal MarketValue => _currentPrice * _holdingShares;
+
+    // 基金持有金额按最新净值×份额；股票按现价×数量
+    public decimal HoldingAmount => HasHolding ? HoldingMarkPrice * _holdingShares : 0;
+
+    public string HoldingAmountText => HasHolding ? $"{HoldingAmount:F2}" : "--";
+
+    // 持仓列表名称下方市值
+    public string HoldingListMarketValueText => HasHolding ? $"{MarketValue:N2}" : "--";
 
     public List<decimal> IntradayPoints
     {
@@ -312,6 +405,37 @@ public class StockItem : INotifyPropertyChanged
     {
         get => _klinePeriod;
         set { _klinePeriod = value; OnPropertyChanged(); }
+    }
+
+    /// <summary>基金日线区间：1m / 3m / 6m / 1y / all</summary>
+    public string FundNavRange
+    {
+        get => _fundNavRange;
+        set { _fundNavRange = value; OnPropertyChanged(); }
+    }
+
+    public List<FundNavChartPoint> FundNavChart
+    {
+        get => _fundNavChart;
+        set { _fundNavChart = value; OnPropertyChanged(); }
+    }
+
+    public List<FundTradeMarker> FundTradeMarkers
+    {
+        get => _fundTradeMarkers;
+        set { _fundTradeMarkers = value; OnPropertyChanged(); }
+    }
+
+    public string FundNavHoverDate
+    {
+        get => _fundNavHoverDate;
+        set { _fundNavHoverDate = value; OnPropertyChanged(); }
+    }
+
+    public string FundNavHoverReturn
+    {
+        get => _fundNavHoverReturn;
+        set { _fundNavHoverReturn = value; OnPropertyChanged(); }
     }
 
     public event PropertyChangedEventHandler? PropertyChanged;

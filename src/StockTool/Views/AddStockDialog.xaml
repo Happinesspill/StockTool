@@ -5,11 +5,12 @@
         AllowsTransparency="True"
         Background="Transparent"
         ResizeMode="NoResize"
-        Width="400" Height="440"
+        Width="420" Height="480"
         WindowStartupLocation="CenterOwner"
         Title="添加自选"
         MouseLeftButtonDown="Window_MouseLeftButtonDown"
-        KeyDown="Window_KeyDown">
+        KeyDown="Window_KeyDown"
+        PreviewKeyDown="Window_PreviewKeyDown">
 
     <Border Background="#F5FFFFFF"
             BorderBrush="#D0CCCCCC"
@@ -33,7 +34,7 @@
                        Margin="0,0,0,12" />
 
             <!-- Search Bar -->
-            <Border Grid.Row="1"
+            <Border x:Name="SearchBar" Grid.Row="1"
                     Background="#F0F0F0"
                     CornerRadius="20"
                     Padding="10,4"
@@ -61,6 +62,7 @@
                              VerticalAlignment="Center"
                              VerticalContentAlignment="Center"
                              TextChanged="TxtSearch_TextChanged"
+                             DataObject.Pasting="TxtSearch_Pasting"
                              ToolTip="输入股票名称或代码搜索" />
 
                     <Button x:Name="BtnClear"
@@ -77,12 +79,12 @@
                 </Grid>
             </Border>
 
-            <!-- Results List -->
+            <!-- Results / Import List -->
             <Border Grid.Row="2"
                     Background="Transparent"
                     CornerRadius="8">
                 <Grid>
-                    <!-- Results -->
+                    <!-- Search results -->
                     <ListBox x:Name="LstResults"
                              Background="Transparent"
                              BorderThickness="0"
@@ -106,7 +108,7 @@
                                                     Padding="0"
                                                     Margin="0,1">
                                                 <ContentPresenter HorizontalAlignment="{TemplateBinding HorizontalContentAlignment}"
-                                                                  VerticalAlignment="{TemplateBinding VerticalContentAlignment}" />
+                                                                  VerticalAlignment="{TemplateBinding VerticalAlignment}" />
                                             </Border>
                                             <ControlTemplate.Triggers>
                                                 <Trigger Property="IsSelected" Value="True">
@@ -175,9 +177,70 @@
                         </ListBox.ItemTemplate>
                     </ListBox>
 
+                    <!-- Holding import preview -->
+                    <ListBox x:Name="LstImport"
+                             Background="Transparent"
+                             BorderThickness="0"
+                             HorizontalContentAlignment="Stretch"
+                             ScrollViewer.HorizontalScrollBarVisibility="Disabled"
+                             ScrollViewer.VerticalScrollBarVisibility="Auto"
+                             Visibility="Collapsed">
+                        <ListBox.ItemContainerStyle>
+                            <Style TargetType="ListBoxItem">
+                                <Setter Property="HorizontalContentAlignment" Value="Stretch" />
+                                <Setter Property="Padding" Value="0" />
+                                <Setter Property="Template">
+                                    <Setter.Value>
+                                        <ControlTemplate TargetType="ListBoxItem">
+                                            <Border Background="Transparent" Padding="0" Margin="0,2">
+                                                <ContentPresenter />
+                                            </Border>
+                                        </ControlTemplate>
+                                    </Setter.Value>
+                                </Setter>
+                            </Style>
+                        </ListBox.ItemContainerStyle>
+                        <ListBox.ItemTemplate>
+                            <DataTemplate>
+                                <Border Background="#F7F7F7" CornerRadius="8" Padding="10,8">
+                                    <Grid>
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="Auto" />
+                                            <ColumnDefinition Width="*" />
+                                            <ColumnDefinition Width="Auto" />
+                                        </Grid.ColumnDefinitions>
+                                        <CheckBox IsChecked="{Binding IsSelected}"
+                                                  VerticalAlignment="Center"
+                                                  Margin="0,0,8,0"
+                                                  IsEnabled="{Binding CanMatch}" />
+                                        <StackPanel Grid.Column="1" VerticalAlignment="Center">
+                                            <TextBlock Text="{Binding Name}"
+                                                       Foreground="#1A1A1A"
+                                                       FontSize="14"
+                                                       FontWeight="SemiBold" />
+                                            <TextBlock Foreground="#888888" FontSize="11" Margin="0,2,0,0">
+                                                <Run Text="{Binding Code, Mode=OneWay}" />
+                                                <Run Text="  " />
+                                                <Run Text="{Binding Market, Mode=OneWay}" />
+                                                <Run Text="  数量 " />
+                                                <Run Text="{Binding SharesText, Mode=OneWay}" />
+                                                <Run Text="  成本 " />
+                                                <Run Text="{Binding CostText, Mode=OneWay}" />
+                                            </TextBlock>
+                                            <TextBlock Text="{Binding Status}"
+                                                       Foreground="{Binding StatusBrush}"
+                                                       FontSize="11"
+                                                       Margin="0,2,0,0" />
+                                        </StackPanel>
+                                    </Grid>
+                                </Border>
+                            </DataTemplate>
+                        </ListBox.ItemTemplate>
+                    </ListBox>
+
                     <!-- Empty / Searching state -->
                     <TextBlock x:Name="TxtPlaceholder"
-                               Text="输入股票名称或代码搜索"
+                               Text="输入股票名称或代码搜索&#x0a;或 Ctrl+V 粘贴持仓截图"
                                Foreground="#AAAAAA"
                                FontSize="13"
                                HorizontalAlignment="Center"
@@ -187,14 +250,30 @@
                 </Grid>
             </Border>
 
-            <!-- Cancel Button -->
-            <Button Grid.Row="3"
-                    Content="取消"
-                    Style="{StaticResource DialogButtonStyle}"
-                    Width="80"
-                    HorizontalAlignment="Right"
-                    Margin="0,12,0,0"
-                    Click="BtnCancel_Click" />
+            <!-- Buttons -->
+            <StackPanel Grid.Row="3"
+                        Orientation="Horizontal"
+                        HorizontalAlignment="Right"
+                        Margin="0,12,0,0">
+                <Button x:Name="BtnBack"
+                        Content="返回"
+                        Style="{StaticResource DialogButtonStyle}"
+                        Width="72"
+                        Margin="0,0,8,0"
+                        Visibility="Collapsed"
+                        Click="BtnBack_Click" />
+                <Button x:Name="BtnSync"
+                        Content="同步持仓"
+                        Style="{StaticResource DialogButtonStyle}"
+                        Width="88"
+                        Margin="0,0,8,0"
+                        Visibility="Collapsed"
+                        Click="BtnSync_Click" />
+                <Button Content="取消"
+                        Style="{StaticResource DialogButtonStyle}"
+                        Width="80"
+                        Click="BtnCancel_Click" />
+            </StackPanel>
         </Grid>
     </Border>
 </Window>

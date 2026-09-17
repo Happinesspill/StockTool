@@ -225,6 +225,57 @@
                       FontSize="13"
                       Margin="0,0,0,14" />
 
+            <!-- Holding vision OCR -->
+            <TextBlock Text="持仓截图识别"
+                       Foreground="#1A1A1A"
+                       FontSize="13"
+                       FontWeight="SemiBold"
+                       Margin="0,4,0,10" />
+            <Grid Margin="0,0,0,10">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="100" />
+                    <ColumnDefinition Width="*" />
+                </Grid.ColumnDefinitions>
+                <TextBlock Text="识别服务"
+                           Foreground="#555555"
+                           FontSize="13"
+                           VerticalAlignment="Center" />
+                <ComboBox Grid.Column="1"
+                          x:Name="CmbVisionProvider"
+                          Style="{StaticResource RoundedComboBoxStyle}"
+                          HorizontalAlignment="Stretch" />
+            </Grid>
+            <Grid Margin="0,0,0,10">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="100" />
+                    <ColumnDefinition Width="*" />
+                </Grid.ColumnDefinitions>
+                <TextBlock Text="DeepSeek Key"
+                           Foreground="#555555"
+                           FontSize="13"
+                           VerticalAlignment="Center" />
+                <TextBox Grid.Column="1"
+                         x:Name="TxtDeepSeekKey"
+                         Style="{StaticResource RoundedTextBoxStyle}"
+                         HorizontalContentAlignment="Left"
+                         ToolTip="https://platform.deepseek.com 申请" />
+            </Grid>
+            <Grid Margin="0,0,0,14">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="100" />
+                    <ColumnDefinition Width="*" />
+                </Grid.ColumnDefinitions>
+                <TextBlock Text="MiMo Key"
+                           Foreground="#555555"
+                           FontSize="13"
+                           VerticalAlignment="Center" />
+                <TextBox Grid.Column="1"
+                         x:Name="TxtMimoKey"
+                         Style="{StaticResource RoundedTextBoxStyle}"
+                         HorizontalContentAlignment="Left"
+                         ToolTip="https://mimo.mi.com 申请" />
+            </Grid>
+
             <!-- 首页指数排序区块已从设置页移除（保留原代码备查）
             <TextBlock Text="首页指数排序"
                        Foreground="#27364A"

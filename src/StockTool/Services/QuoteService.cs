@@ -133,6 +133,7 @@ public class QuoteService
                         stock.CurrentPrice = fundQuote.F2;
                         stock.ChangePercent = fundQuote.F3;
                         stock.YesterdayClose = fundQuote.F17;
+                        stock.HasFundValuation = fundQuote.HasEstimate;
                         continue;
                     }
 
