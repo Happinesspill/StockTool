@@ -76,7 +76,15 @@ public class StockItem : INotifyPropertyChanged
     public string Code
     {
         get => _code;
-        set { _code = value; OnPropertyChanged(); OnPropertyChanged(nameof(CodeNumeric)); OnPropertyChanged(nameof(IsFund)); OnPropertyChanged(nameof(PriceText)); }
+        set
+        {
+            _code = value;
+            OnPropertyChanged();
+            OnPropertyChanged(nameof(CodeNumeric));
+            OnPropertyChanged(nameof(IsFund));
+            OnPropertyChanged(nameof(PriceText));
+            OnPropertyChanged(nameof(IntradaySlotCount));
+        }
     }
 
     public string CodeNumeric => _code.Length > 2 ? _code[2..] : _code;
@@ -84,8 +92,22 @@ public class StockItem : INotifyPropertyChanged
     public string Market
     {
         get => _market;
-        set { _market = value; OnPropertyChanged(); OnPropertyChanged(nameof(IsFund)); OnPropertyChanged(nameof(PriceText)); }
+        set
+        {
+            _market = value;
+            OnPropertyChanged();
+            OnPropertyChanged(nameof(IsFund));
+            OnPropertyChanged(nameof(PriceText));
+            OnPropertyChanged(nameof(IntradaySlotCount));
+        }
     }
+
+    // 分时全日槽位数：A 股 242（含 15:00），港股 332（含 16:00）
+    public int IntradaySlotCount =>
+        string.Equals(_market, "港股", StringComparison.OrdinalIgnoreCase)
+        || _code.StartsWith("HK", StringComparison.OrdinalIgnoreCase)
+            ? 332
+            : 242;
 
     // 场外基金走天天基金估值接口；场内 ETF/LOF 与股票一样走行情接口
     public bool IsFund =>
@@ -316,6 +338,7 @@ public class StockItem : INotifyPropertyChanged
             _holdingShares = value;
             OnPropertyChanged();
             OnPropertyChanged(nameof(HasHolding));
+            OnPropertyChanged(nameof(HoldingSharesText));
             OnPropertyChanged(nameof(HoldingProfit));
             OnPropertyChanged(nameof(HoldingProfitPercent));
             OnPropertyChanged(nameof(TodayHoldingProfit));
@@ -345,6 +368,13 @@ public class StockItem : INotifyPropertyChanged
     }
 
     public bool HasHolding => _holdingShares > 0 && _holdingCost > 0;
+
+    public string HoldingSharesText =>
+        _holdingShares > 0
+            ? (_holdingShares == decimal.Truncate(_holdingShares)
+                ? $"{_holdingShares:0}"
+                : $"{_holdingShares:0.##}")
+            : "--";
 
     // 基金盈亏按最新净值；股票按现价
     private decimal HoldingMarkPrice => IsFund && _yesterdayClose > 0 ? _yesterdayClose : _currentPrice;

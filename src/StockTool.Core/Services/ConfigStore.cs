@@ -20,6 +20,10 @@ public class ConfigStore
     private static string FundsPath =>
         Path.Combine(ConfigDir, "funds.json");
 
+    // DeepSeek / 小米 MiMo API Key 本地文件，不进 Git
+    private static string SecretsPath =>
+        Path.Combine(ConfigDir, "secrets.json");
+
     public AppConfig Load()
     {
         try
@@ -31,6 +35,7 @@ public class ConfigStore
                 config.EnsureGroupsMigrated();
                 config.EnsureHomeIndicesMigrated();
                 config.EnsureHkCodesMigrated();
+                ApplyApiSecrets(config, json);
                 return config;
             }
         }
@@ -43,6 +48,7 @@ public class ConfigStore
         fresh.EnsureGroupsMigrated();
         fresh.EnsureHomeIndicesMigrated();
         fresh.EnsureHkCodesMigrated();
+        ApplyApiSecrets(fresh, null);
         return fresh;
     }
 
@@ -51,6 +57,7 @@ public class ConfigStore
         try
         {
             Directory.CreateDirectory(ConfigDir);
+            SaveApiSecrets(config);
             var json = JsonSerializer.Serialize(config, JsonOptions);
             File.WriteAllText(ConfigPath, json);
         }
@@ -135,4 +142,74 @@ public class ConfigStore
         !StockItem.IsExchangeFundCode(entry.Code)
         && (string.Equals(entry.Market, "基金", StringComparison.OrdinalIgnoreCase)
             || entry.Code.StartsWith("FD", StringComparison.OrdinalIgnoreCase));
+
+    private sealed class ApiSecrets
+    {
+        public string DeepSeekApiKey { get; set; } = string.Empty;
+        public string MimoApiKey { get; set; } = string.Empty;
+    }
+
+    // 优先读 secrets.json；旧版写在 config.json 中的 Key 迁入本地文件
+    private void ApplyApiSecrets(AppConfig config, string? configJson)
+    {
+        var secrets = ReadApiSecrets();
+        if (secrets != null)
+        {
+            config.DeepSeekApiKey = secrets.DeepSeekApiKey ?? "";
+            config.MimoApiKey = secrets.MimoApiKey ?? "";
+            return;
+        }
+
+        if (string.IsNullOrEmpty(configJson))
+            return;
+
+        try
+        {
+            using var doc = JsonDocument.Parse(configJson);
+            config.DeepSeekApiKey = ReadJsonString(doc.RootElement, "deepSeekApiKey");
+            config.MimoApiKey = ReadJsonString(doc.RootElement, "mimoApiKey");
+        }
+        catch
+        {
+            return;
+        }
+
+        if (string.IsNullOrWhiteSpace(config.DeepSeekApiKey) &&
+            string.IsNullOrWhiteSpace(config.MimoApiKey))
+            return;
+
+        Save(config);
+    }
+
+    private ApiSecrets? ReadApiSecrets()
+    {
+        try
+        {
+            if (!File.Exists(SecretsPath))
+                return null;
+            var json = File.ReadAllText(SecretsPath);
+            return JsonSerializer.Deserialize<ApiSecrets>(json, JsonOptions);
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    private void SaveApiSecrets(AppConfig config)
+    {
+        var secrets = new ApiSecrets
+        {
+            DeepSeekApiKey = config.DeepSeekApiKey ?? "",
+            MimoApiKey = config.MimoApiKey ?? ""
+        };
+        File.WriteAllText(SecretsPath, JsonSerializer.Serialize(secrets, JsonOptions));
+    }
+
+    private static string ReadJsonString(JsonElement root, string name)
+    {
+        if (root.TryGetProperty(name, out var el) && el.ValueKind == JsonValueKind.String)
+            return el.GetString() ?? "";
+        return "";
+    }
 }

@@ -160,14 +160,16 @@ public class MainViewModel : INotifyPropertyChanged
             OnPropertyChanged(nameof(SelectedGroupName));
             OnPropertyChanged(nameof(ShowHoldingColumn));
             OnPropertyChanged(nameof(ShowHoldingAmountColumn));
+            OnPropertyChanged(nameof(ShowHoldingSharesColumn));
             OnPropertyChanged(nameof(ShowHoldingSummary));
             OnPropertyChanged(nameof(ShowHoldingSummaryDetails));
             OnPropertyChanged(nameof(IsHoldingGroupSelected));
             OnPropertyChanged(nameof(ShowTrendColumn));
-            OnPropertyChanged(nameof(NameColumnWidth));
+            NotifyColumnWidthsChanged();
             OnPropertyChanged(nameof(IsFundGroup));
             OnPropertyChanged(nameof(EmptyListHint));
             OnPropertyChanged(nameof(PriceColumnHeader));
+            OnPropertyChanged(nameof(NameColumnHeader));
             OnPropertyChanged(nameof(HoldingProfitColumnHeader));
             OnPropertyChanged(nameof(HoldingMarketValueLabel));
             OnPropertyChanged(nameof(HoldingMarketValueText));
@@ -185,6 +187,11 @@ public class MainViewModel : INotifyPropertyChanged
                 SortColumn = "default";
                 SortDescending = true;
             }
+            if (!ShowHoldingSharesColumn && string.Equals(SortColumn, "holdingShares", StringComparison.OrdinalIgnoreCase))
+            {
+                SortColumn = "default";
+                SortDescending = true;
+            }
             RefreshVisibleStocks();
         }
     }
@@ -197,6 +204,8 @@ public class MainViewModel : INotifyPropertyChanged
     // 基金列表：名称后显示持有金额（份额×最新净值）
     public bool ShowHoldingAmountColumn => IsFundGroup;
 
+    public bool ShowHoldingSharesColumn => IsHoldingGroupSelected;
+
     // 持仓/基金页显示汇总栏；其他分组不显示
     public bool ShowHoldingSummary => SelectedGroupId == HoldingGroupId || IsFundGroup;
     public bool ShowHoldingSummaryDetails => SelectedGroupId == HoldingGroupId || IsFundGroup;
@@ -205,18 +214,93 @@ public class MainViewModel : INotifyPropertyChanged
     // 基金无可用盘中估值走势数据时不展示趋势列
     public bool ShowTrendColumn => !IsFundGroup;
 
-    /// <summary>名称列宽：持仓页 110，其它页 130；无趋势列的分组自适应</summary>
-    public GridLength NameColumnWidth => !ShowTrendColumn
-        ? new GridLength(1, GridUnitType.Star)
-        : new GridLength(SelectedGroupId == HoldingGroupId ? 110 : 130);
+    public GridLength NameColumnWidth => new(_config.NameColWidth);
+
+    public GridLength HoldingAmountColumnWidth =>
+        ShowHoldingAmountColumn ? new GridLength(_config.HoldingAmountColWidth) : new GridLength(0);
+
+    public GridLength HoldingProfitColumnWidth =>
+        ShowHoldingColumn ? new GridLength(_config.HoldingProfitColWidth) : new GridLength(0);
+
+    public GridLength HoldingSharesColumnWidth =>
+        ShowHoldingSharesColumn ? new GridLength(_config.HoldingSharesColWidth) : new GridLength(0);
+
+    public GridLength TrendColumnWidth =>
+        ShowTrendColumn ? new GridLength(_config.TrendColWidth) : new GridLength(0);
 
     public bool IsFundGroup => SelectedGroupName == FundGroupName;
 
     public string EmptyListHint => IsFundGroup ? "当前分组暂无基金" : "当前分组暂无股票";
 
-    public string PriceColumnHeader => IsFundGroup ? "预估盈利/涨幅" : "现价/涨幅";
+    public GridLength PriceColumnWidth => new(_config.PriceColWidth);
 
-    public string HoldingProfitColumnHeader => IsFundGroup ? "持有收益" : "持仓盈亏";
+    // 可见列宽合计，表头与列表同宽
+    public double ListContentWidth =>
+        _config.NameColWidth
+        + (ShowHoldingAmountColumn ? _config.HoldingAmountColWidth : 0)
+        + (ShowHoldingColumn ? _config.HoldingProfitColWidth : 0)
+        + (ShowHoldingSharesColumn ? _config.HoldingSharesColWidth : 0)
+        + (ShowTrendColumn ? _config.TrendColWidth : 0)
+        + _config.PriceColWidth;
+
+    // 拖拽右侧边框，仅调整当前列宽
+    public void AdjustColumnWidth(string column, double delta)
+    {
+        switch (column)
+        {
+            case "name":
+                _config.NameColWidth = Math.Max(0, _config.NameColWidth + delta);
+                OnPropertyChanged(nameof(NameColumnWidth));
+                break;
+            case "holdingAmount":
+                if (!ShowHoldingAmountColumn) return;
+                _config.HoldingAmountColWidth = Math.Max(0, _config.HoldingAmountColWidth + delta);
+                OnPropertyChanged(nameof(HoldingAmountColumnWidth));
+                break;
+            case "profit":
+                if (!ShowHoldingColumn) return;
+                _config.HoldingProfitColWidth = Math.Max(0, _config.HoldingProfitColWidth + delta);
+                OnPropertyChanged(nameof(HoldingProfitColumnWidth));
+                break;
+            case "holdingShares":
+                if (!ShowHoldingSharesColumn) return;
+                _config.HoldingSharesColWidth = Math.Max(0, _config.HoldingSharesColWidth + delta);
+                OnPropertyChanged(nameof(HoldingSharesColumnWidth));
+                break;
+            case "trend":
+                if (!ShowTrendColumn) return;
+                _config.TrendColWidth = Math.Max(0, _config.TrendColWidth + delta);
+                OnPropertyChanged(nameof(TrendColumnWidth));
+                break;
+            case "price":
+                _config.PriceColWidth = Math.Max(0, _config.PriceColWidth + delta);
+                OnPropertyChanged(nameof(PriceColumnWidth));
+                break;
+            default:
+                return;
+        }
+        OnPropertyChanged(nameof(ListContentWidth));
+    }
+
+    // 拖拽结束后持久化列宽
+    public void SaveColumnWidths() => _configStore.Save(_config);
+
+    private void NotifyColumnWidthsChanged()
+    {
+        OnPropertyChanged(nameof(NameColumnWidth));
+        OnPropertyChanged(nameof(HoldingAmountColumnWidth));
+        OnPropertyChanged(nameof(HoldingProfitColumnWidth));
+        OnPropertyChanged(nameof(HoldingSharesColumnWidth));
+        OnPropertyChanged(nameof(TrendColumnWidth));
+        OnPropertyChanged(nameof(PriceColumnWidth));
+        OnPropertyChanged(nameof(ListContentWidth));
+    }
+
+    public string PriceColumnHeader => IsFundGroup ? "预估盈利/涨幅" : "涨幅";
+
+    public string NameColumnHeader => IsHoldingGroupSelected ? "市值" : "名称";
+
+    public string HoldingProfitColumnHeader => IsFundGroup ? "持有收益" : "盈亏";
 
     public string StatusSourceText => IsFundGroup ? "数据来源：天天基金 | 仅供参考" : "数据来源：东方财富 | 仅供参考";
 
@@ -276,6 +360,7 @@ public class MainViewModel : INotifyPropertyChanged
     public string ChangeSortArrow => GetSortArrow("change");
     public string ProfitSortArrow => GetSortArrow("profit");
     public string HoldingAmountSortArrow => GetSortArrow("holdingAmount");
+    public string HoldingSharesSortArrow => GetSortArrow("holdingShares");
     public string TurnoverSortArrow => GetSortArrow("turnover");
     public string TurnoverRateSortArrow => GetSortArrow("turnoverRate");
     public string SpeedSortArrow => GetSortArrow("speed");
@@ -509,14 +594,16 @@ public class MainViewModel : INotifyPropertyChanged
         OnPropertyChanged(nameof(SelectedGroupName));
         OnPropertyChanged(nameof(ShowHoldingColumn));
         OnPropertyChanged(nameof(ShowHoldingAmountColumn));
+        OnPropertyChanged(nameof(ShowHoldingSharesColumn));
         OnPropertyChanged(nameof(ShowHoldingSummary));
         OnPropertyChanged(nameof(ShowHoldingSummaryDetails));
         OnPropertyChanged(nameof(IsHoldingGroupSelected));
         OnPropertyChanged(nameof(ShowTrendColumn));
-        OnPropertyChanged(nameof(NameColumnWidth));
+        NotifyColumnWidthsChanged();
         OnPropertyChanged(nameof(IsFundGroup));
         OnPropertyChanged(nameof(EmptyListHint));
         OnPropertyChanged(nameof(PriceColumnHeader));
+        OnPropertyChanged(nameof(NameColumnHeader));
         OnPropertyChanged(nameof(HoldingProfitColumnHeader));
         OnPropertyChanged(nameof(HoldingMarketValueLabel));
         OnPropertyChanged(nameof(HoldingMarketValueText));
@@ -803,6 +890,7 @@ public class MainViewModel : INotifyPropertyChanged
         OnPropertyChanged(nameof(ChangeSortArrow));
         OnPropertyChanged(nameof(ProfitSortArrow));
         OnPropertyChanged(nameof(HoldingAmountSortArrow));
+        OnPropertyChanged(nameof(HoldingSharesSortArrow));
         OnPropertyChanged(nameof(TurnoverSortArrow));
         OnPropertyChanged(nameof(TurnoverRateSortArrow));
         OnPropertyChanged(nameof(SpeedSortArrow));
@@ -1366,6 +1454,7 @@ public class MainViewModel : INotifyPropertyChanged
             "change" => s => s.ChangePercent,
             "profit" => s => s.HoldingProfit,
             "holdingAmount" => s => s.HoldingAmount,
+            "holdingShares" => s => s.HoldingShares,
             "turnover" => s => s.Turnover,
             "turnoverRate" => s => s.TurnoverRate,
             "speed" => s => s.Speed,

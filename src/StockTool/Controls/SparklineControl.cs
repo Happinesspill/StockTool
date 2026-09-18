@@ -44,6 +44,10 @@ public class SparklineControl : Control
         DependencyProperty.Register(nameof(VisibleSubCount), typeof(int), typeof(SparklineControl),
             new FrameworkPropertyMetadata(0, FrameworkPropertyMetadataOptions.AffectsRender, OnSubCountChanged));
 
+    public static readonly DependencyProperty ExpectedCountProperty =
+        DependencyProperty.Register(nameof(ExpectedCount), typeof(int), typeof(SparklineControl),
+            new FrameworkPropertyMetadata(0, FrameworkPropertyMetadataOptions.AffectsRender));
+
     private static readonly Typeface LabelTypeface = new("Microsoft YaHei");
     private static readonly Color ColorRed = Color.FromRgb(217, 48, 37);
     private static readonly Color ColorGreen = Color.FromRgb(26, 140, 63);
@@ -92,6 +96,13 @@ public class SparklineControl : Control
     {
         get => (int)GetValue(VisibleSubCountProperty);
         set => SetValue(VisibleSubCountProperty, value);
+    }
+
+    // 全日固定点数；>0 时按槽位向后绘制，未到收盘右侧留白
+    public int ExpectedCount
+    {
+        get => (int)GetValue(ExpectedCountProperty);
+        set => SetValue(ExpectedCountProperty, value);
     }
 
     static SparklineControl()
@@ -189,7 +200,8 @@ public class SparklineControl : Control
 
         int n = points.Count;
         int startIdx = 0;
-        double spacing = (w - 16) / (n + 0.5);
+        int slots = ResolveSlotCount(n);
+        double spacing = (w - 16) / (slots + 0.5);
 
         double y = mainH;
         if (subCount >= 1)
@@ -206,6 +218,14 @@ public class SparklineControl : Control
         {
             DrawRsiPane(dc, startIdx, n, w, y, SubPaneHeight, spacing, rsi);
         }
+    }
+
+    private int ResolveSlotCount(int pointCount)
+    {
+        int expected = ExpectedCount;
+        if (expected > 1)
+            return Math.Max(expected, pointCount);
+        return Math.Max(pointCount, 2);
     }
 
     private void DrawPricePane(DrawingContext dc, List<decimal> points, double w, double mainH, bool showLabels)
@@ -285,7 +305,9 @@ public class SparklineControl : Control
             ? Color.FromRgb(0x22, 0x22, 0x22)
             : (isUp ? ColorRed : ColorGreen);
         var linePen = new Pen(new SolidColorBrush(lineColor), showLabels ? 1.4 : 1.0);
-        double stepX = chartW / (points.Count - 1);
+        int slots = ResolveSlotCount(points.Count);
+        double stepX = chartW / (slots - 1);
+        double endX = leftPad + (points.Count - 1) * stepX;
 
         DrawPolyline(dc, points, leftPad, stepX, Y, linePen);
 
@@ -297,7 +319,7 @@ public class SparklineControl : Control
             for (int i = 1; i < points.Count; i++)
                 fillPoints.Add(new Point(leftPad + i * stepX, Y(points[i])));
             ctx.PolyLineTo(fillPoints, true, false);
-            ctx.LineTo(new Point(w, topPad + chartH), true, false);
+            ctx.LineTo(new Point(endX, topPad + chartH), true, false);
             ctx.LineTo(new Point(leftPad, topPad + chartH), true, false);
         }
         Color fillC = showLabels
@@ -316,7 +338,7 @@ public class SparklineControl : Control
                 var avgSlice = avgPoints.Take(count).ToList();
                 var avgPen = new Pen(new SolidColorBrush(Color.FromRgb(245, 166, 35)), 1.6);
                 avgPen.Freeze();
-                DrawPolyline(dc, avgSlice, leftPad, chartW / (count - 1), Y, avgPen);
+                DrawPolyline(dc, avgSlice, leftPad, stepX, Y, avgPen);
             }
         }
 

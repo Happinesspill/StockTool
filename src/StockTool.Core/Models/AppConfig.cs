@@ -1,5 +1,6 @@
 ﻿using System.ComponentModel;
 using System.Runtime.CompilerServices;
+using System.Text.Json.Serialization;
 
 namespace StockTool.Core.Models;
 
@@ -27,9 +28,19 @@ public class AppConfig
     public string Hotkey { get; set; } = "Ctrl+Shift+S";
     public bool Topmost { get; set; } = true;
     public bool ShowMarketTag { get; set; } = true;
+    /// <summary>列表列宽（拖拽后持久化）</summary>
+    public double NameColWidth { get; set; } = 130;
+    public double HoldingAmountColWidth { get; set; } = 80;
+    public double HoldingProfitColWidth { get; set; } = 80;
+    public double HoldingSharesColWidth { get; set; } = 68;
+    public double TrendColWidth { get; set; } = 100;
+    public double PriceColWidth { get; set; } = 96;
     /// <summary>持仓截图识别：deepseek | mimo</summary>
     public string HoldingVisionProvider { get; set; } = "deepseek";
+    // API Key 仅写入本地 secrets.json
+    [JsonIgnore]
     public string DeepSeekApiKey { get; set; } = string.Empty;
+    [JsonIgnore]
     public string MimoApiKey { get; set; } = string.Empty;
 
     /// <summary>旧配置无分组时迁移为「自选」+ 空「港股」「ETF」「基金」；「自选」固定首位。</summary>

@@ -372,6 +372,7 @@
                             Times="{Binding IntradayTimes}"
                             BaseLine="{Binding YesterdayClose}"
                             IsUp="{Binding IsUp}"
+                            ExpectedCount="{Binding IntradaySlotCount}"
                             ShowLabels="True"
                             VisibleSubCount="{Binding DataContext.ChartSubCount, RelativeSource={RelativeSource AncestorType=Window}}"
                             Margin="0,2"

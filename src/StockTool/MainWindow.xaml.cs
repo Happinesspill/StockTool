@@ -2,6 +2,7 @@
 using System.Globalization;
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Controls.Primitives;
 using System.Windows.Input;
 using System.Windows.Media;
 using System.Windows.Media.Imaging;
@@ -64,12 +65,10 @@ public partial class MainWindow : Window
 
         if (dialog.ImportedHoldings.Count > 0)
         {
-            int n = VM.IsFundGroup
-                ? VM.SyncFundHoldingsFromImport(dialog.ImportedHoldings)
-                : VM.SyncHoldingsFromImport(dialog.ImportedHoldings);
-            if (n > 0)
-                MessageBox.Show(this, $"已同步 {n} 只持仓（未删除原有持仓）", "同步完成",
-                    MessageBoxButton.OK, MessageBoxImage.Information);
+            if (VM.IsFundGroup)
+                VM.SyncFundHoldingsFromImport(dialog.ImportedHoldings);
+            else
+                VM.SyncHoldingsFromImport(dialog.ImportedHoldings);
             return;
         }
 
@@ -210,6 +209,18 @@ public partial class MainWindow : Window
     {
         HeaderScroll.ScrollToHorizontalOffset(e.HorizontalOffset);
         SyncHeaderPadding();
+    }
+
+    // 表头拖拽列宽，同步到数据行
+    private void ColumnResizeThumb_DragDelta(object sender, DragDeltaEventArgs e)
+    {
+        if (sender is not Thumb { Tag: string column }) return;
+        VM.AdjustColumnWidth(column, e.HorizontalChange);
+    }
+
+    private void ColumnResizeThumb_DragCompleted(object sender, DragCompletedEventArgs e)
+    {
+        VM.SaveColumnWidths();
     }
 
     // 表头与列表共用列宽；列表出现垂直滚动条时预留同等宽度

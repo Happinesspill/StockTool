@@ -364,3 +364,9 @@ FodyWeavers.xsd
 /EdgeExtensions/2.6.1.0_0
 .bitfun/
 .openbitfun/
+
+# Local API keys — never commit
+secrets.json
+**/secrets.json
+.env
+.env.*
