@@ -1,4 +1,4 @@
-﻿using System.Text.Json;
+using System.Text.Json;
 using StockTool.Core.Models;
 
 namespace StockTool.Core.Services;
@@ -35,6 +35,7 @@ public class ConfigStore
                 config.EnsureGroupsMigrated();
                 config.EnsureHomeIndicesMigrated();
                 config.EnsureHkCodesMigrated();
+                config.EnsureColumnWidthsMigrated();
                 ApplyApiSecrets(config, json);
                 return config;
             }
@@ -48,6 +49,7 @@ public class ConfigStore
         fresh.EnsureGroupsMigrated();
         fresh.EnsureHomeIndicesMigrated();
         fresh.EnsureHkCodesMigrated();
+        fresh.EnsureColumnWidthsMigrated();
         ApplyApiSecrets(fresh, null);
         return fresh;
     }

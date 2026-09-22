@@ -1,4 +1,4 @@
-﻿using System.ComponentModel;
+using System.ComponentModel;
 using System.Runtime.CompilerServices;
 using System.Text.Json.Serialization;
 
@@ -28,7 +28,10 @@ public class AppConfig
     public string Hotkey { get; set; } = "Ctrl+Shift+S";
     public bool Topmost { get; set; } = true;
     public bool ShowMarketTag { get; set; } = true;
-    /// <summary>列表列宽（拖拽后持久化）</summary>
+    /// <summary>列表列宽：持仓/基金各自独立，其余分组共用 SharedListColumnWidthsId</summary>
+    public Dictionary<string, ListColumnWidths> ColumnWidthsByGroup { get; set; } = new();
+    public const string SharedListColumnWidthsId = "__shared__";
+    // 旧版全局列宽，仅用于迁移到 ColumnWidthsByGroup
     public double NameColWidth { get; set; } = 130;
     public double HoldingAmountColWidth { get; set; } = 80;
     public double HoldingProfitColWidth { get; set; } = 80;
@@ -57,6 +60,7 @@ public class AppConfig
             foreach (var entry in Watchlist)
                 entry.GroupId = zixuan.Id;
             EnsureHomeIndicesMigrated();
+            EnsureColumnWidthsMigrated();
             return;
         }
 
@@ -107,6 +111,7 @@ public class AppConfig
             ListDensity = "moderate";
 
         EnsureHomeIndicesMigrated();
+        EnsureColumnWidthsMigrated();
     }
 
     public void EnsureHomeIndicesMigrated()
@@ -126,6 +131,90 @@ public class AppConfig
         if (HomeIndexCodes.Count == 0)
             HomeIndexCodes = IndexCatalog.DefaultHomeCodes.ToList();
     }
+
+    // 补齐共用/持仓/基金列宽；普通分组统一走 SharedListColumnWidthsId
+    public void EnsureColumnWidthsMigrated()
+    {
+        ColumnWidthsByGroup ??= new Dictionary<string, ListColumnWidths>();
+        bool seedFromLegacy = ColumnWidthsByGroup.Count == 0;
+
+        ListColumnWidths CreateDefault() => seedFromLegacy
+            ? new ListColumnWidths
+            {
+                Name = NameColWidth,
+                HoldingAmount = HoldingAmountColWidth,
+                HoldingProfit = HoldingProfitColWidth,
+                HoldingShares = HoldingSharesColWidth,
+                Trend = TrendColWidth,
+                Price = PriceColWidth
+            }
+            : new ListColumnWidths();
+
+        if (!ColumnWidthsByGroup.ContainsKey(SharedListColumnWidthsId))
+        {
+            var seedGroup = Groups.FirstOrDefault(g => g.Name == "自选")
+                ?? Groups.FirstOrDefault(g => g.Name != "基金");
+            if (seedGroup != null && ColumnWidthsByGroup.TryGetValue(seedGroup.Id, out var existing))
+                ColumnWidthsByGroup[SharedListColumnWidthsId] = CloneColumnWidths(existing);
+            else
+                ColumnWidthsByGroup[SharedListColumnWidthsId] = CreateDefault();
+        }
+
+        if (!ColumnWidthsByGroup.ContainsKey(WatchlistGroup.HoldingGroupId))
+            ColumnWidthsByGroup[WatchlistGroup.HoldingGroupId] = CreateDefault();
+
+        foreach (var g in Groups.Where(g => g.Name == "基金"))
+        {
+            if (!ColumnWidthsByGroup.ContainsKey(g.Id))
+                ColumnWidthsByGroup[g.Id] = CreateDefault();
+        }
+
+        var keep = new HashSet<string>(StringComparer.Ordinal)
+        {
+            SharedListColumnWidthsId,
+            WatchlistGroup.HoldingGroupId
+        };
+        foreach (var g in Groups.Where(g => g.Name == "基金"))
+            keep.Add(g.Id);
+
+        foreach (var key in ColumnWidthsByGroup.Keys.Where(k => !keep.Contains(k)).ToList())
+            ColumnWidthsByGroup.Remove(key);
+    }
+
+    // 持仓/基金各自独立；其余分组共用一套列宽
+    public string ResolveColumnWidthsKey(string groupId)
+    {
+        if (string.IsNullOrEmpty(groupId) || groupId == WatchlistGroup.HoldingGroupId)
+            return WatchlistGroup.HoldingGroupId;
+
+        var group = Groups.FirstOrDefault(g => g.Id == groupId);
+        if (group != null && group.Name == "基金")
+            return group.Id;
+
+        return SharedListColumnWidthsId;
+    }
+
+    // 取分组对应列宽，不存在则按默认创建
+    public ListColumnWidths GetColumnWidths(string groupId)
+    {
+        string key = ResolveColumnWidthsKey(groupId);
+        if (ColumnWidthsByGroup.TryGetValue(key, out var widths))
+            return widths;
+
+        widths = new ListColumnWidths();
+        ColumnWidthsByGroup[key] = widths;
+        return widths;
+    }
+
+    private static ListColumnWidths CloneColumnWidths(ListColumnWidths source) => new()
+    {
+        Name = source.Name,
+        HoldingAmount = source.HoldingAmount,
+        HoldingProfit = source.HoldingProfit,
+        HoldingShares = source.HoldingShares,
+        Trend = source.Trend,
+        Price = source.Price
+    };
 
     /// <summary>修正历史港股代码：东财市场码 "5" 曾被当成前缀，使 03690 存成 503690。</summary>
     public void EnsureHkCodesMigrated()
@@ -225,4 +314,15 @@ public class HoldingImportItem
     public string Market { get; set; } = string.Empty;
     public decimal Shares { get; set; }
     public decimal Cost { get; set; }
+}
+
+// 单个分组的列表列宽
+public class ListColumnWidths
+{
+    public double Name { get; set; } = 130;
+    public double HoldingAmount { get; set; } = 80;
+    public double HoldingProfit { get; set; } = 80;
+    public double HoldingShares { get; set; } = 68;
+    public double Trend { get; set; } = 100;
+    public double Price { get; set; } = 96;
 }

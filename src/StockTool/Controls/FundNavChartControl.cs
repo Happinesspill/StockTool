@@ -172,16 +172,48 @@ public class FundNavChartControl : Control
         DrawTag(dc, $"{points[hi].ReturnPercent:0.00}%", _plotPoints[hi], above: true);
         DrawTag(dc, $"{points[lo].ReturnPercent:0.00}%", _plotPoints[lo], above: false);
 
-        // trade markers
-        if (Markers != null)
+        // trade markers：买入仅最近一次显示标签，更早的用小红点
+        if (Markers != null && Markers.Count > 0)
         {
-            foreach (var m in Markers)
+            // 按图上点位去重；同一位置只保留日期最新的一笔买入
+            var buyAtIndex = new Dictionary<int, DateTime>();
+            int latestBuyPlotIdx = -1;
+            DateTime latestBuyDate = DateTime.MinValue;
+
+            for (int i = 0; i < Markers.Count; i++)
             {
+                var m = Markers[i];
+                if (m.Side != TradeSide.Buy) continue;
                 int idx = FindNearestIndex(points, m.Date);
                 if (idx < 0) continue;
-                var pt = _plotPoints[idx];
-                bool buy = m.Side == TradeSide.Buy;
-                DrawTradeLabel(dc, buy ? "买入" : "卖出", pt, buy);
+
+                if (!buyAtIndex.TryGetValue(idx, out var existing) || m.Date >= existing)
+                    buyAtIndex[idx] = m.Date;
+
+                if (latestBuyPlotIdx < 0 || m.Date > latestBuyDate ||
+                    (m.Date == latestBuyDate && idx >= latestBuyPlotIdx))
+                {
+                    latestBuyDate = m.Date;
+                    latestBuyPlotIdx = idx;
+                }
+            }
+
+            foreach (var kv in buyAtIndex)
+            {
+                var pt = _plotPoints[kv.Key];
+                if (kv.Key == latestBuyPlotIdx)
+                    DrawTradeLabel(dc, "买入", pt, buy: true);
+                else
+                    DrawTradeDot(dc, pt, buy: true);
+            }
+
+            for (int i = 0; i < Markers.Count; i++)
+            {
+                var m = Markers[i];
+                if (m.Side == TradeSide.Buy) continue;
+                int idx = FindNearestIndex(points, m.Date);
+                if (idx < 0) continue;
+                DrawTradeLabel(dc, "卖出", _plotPoints[idx], buy: false);
             }
         }
 
@@ -232,6 +264,13 @@ public class FundNavChartControl : Control
         dc.DrawRoundedRectangle(bg, null, new Rect(x, y, bw, bh), 3, 3);
         dc.DrawText(ft, new Point(x + 5, y + 2));
         dc.DrawLine(new Pen(bg, 1), new Point(anchor.X, buy ? y + bh : y), anchor);
+    }
+
+    // 历史买入/卖出标记点
+    private static void DrawTradeDot(DrawingContext dc, Point anchor, bool buy)
+    {
+        var brush = new SolidColorBrush(buy ? ColorRed : ColorGreen);
+        dc.DrawEllipse(brush, null, anchor, 3.5, 3.5);
     }
 
     private static void DrawTag(DrawingContext dc, string text, Point anchor, bool above)
