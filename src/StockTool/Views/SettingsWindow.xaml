@@ -6,7 +6,9 @@
         Background="Transparent"
         ResizeMode="NoResize"
         SizeToContent="WidthAndHeight"
-        WindowStartupLocation="CenterOwner"
+        WindowStartupLocation="CenterScreen"
+        ShowInTaskbar="False"
+        Topmost="False"
         Title="设置"
         MouseLeftButtonDown="Window_MouseLeftButtonDown">
 

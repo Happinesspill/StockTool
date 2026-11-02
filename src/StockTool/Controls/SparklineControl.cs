@@ -111,6 +111,11 @@ public class SparklineControl : Control
             new FrameworkPropertyMetadata(typeof(SparklineControl)));
     }
 
+    public SparklineControl()
+    {
+        UpdateHitTest();
+    }
+
     private static void OnShowLabelsChanged(DependencyObject d, DependencyPropertyChangedEventArgs e)
     {
         if (d is SparklineControl c)
@@ -128,10 +133,11 @@ public class SparklineControl : Control
         c.InvalidateVisual();
     }
 
-    /// <summary>详情大图需要接收鼠标事件；列表小图保持穿透</summary>
+    /// <summary>必须透明背景才会走 OnRender；列表小图不接收鼠标</summary>
     private void UpdateHitTest()
     {
-        Background = ShowLabels ? Brushes.Transparent : null;
+        Background = Brushes.Transparent;
+        IsHitTestVisible = ShowLabels;
     }
 
     private static void OnSubCountChanged(DependencyObject d, DependencyPropertyChangedEventArgs e)

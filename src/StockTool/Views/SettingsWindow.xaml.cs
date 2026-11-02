@@ -16,6 +16,8 @@ public partial class SettingsWindow : Window
     public int RefreshInterval { get; private set; }
     public string Hotkey { get; private set; }
     public bool IsTopmost { get; private set; }
+    /// <summary>非模态关闭时是否保存</summary>
+    public bool Confirmed { get; private set; }
     public bool ShowMarketTag { get; private set; }
     public string HoldingVisionProvider { get; private set; } = "deepseek";
     public string DeepSeekApiKey { get; private set; } = "";
@@ -137,7 +139,7 @@ public partial class SettingsWindow : Window
 
     private void BtnCancel_Click(object sender, RoutedEventArgs e)
     {
-        DialogResult = false;
+        Confirmed = false;
         Close();
     }
 
@@ -153,7 +155,7 @@ public partial class SettingsWindow : Window
             : "deepseek";
         DeepSeekApiKey = TxtDeepSeekKey.Text.Trim();
         MimoApiKey = TxtMimoKey.Text.Trim();
-        DialogResult = true;
+        Confirmed = true;
         Close();
     }
 

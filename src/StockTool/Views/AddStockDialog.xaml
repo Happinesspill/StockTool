@@ -6,7 +6,9 @@
         Background="Transparent"
         ResizeMode="NoResize"
         Width="420" Height="480"
-        WindowStartupLocation="CenterOwner"
+        WindowStartupLocation="CenterScreen"
+        ShowInTaskbar="False"
+        Topmost="False"
         Title="添加自选"
         MouseLeftButtonDown="Window_MouseLeftButtonDown"
         KeyDown="Window_KeyDown"
@@ -84,8 +86,41 @@
                     Background="Transparent"
                     CornerRadius="8">
                 <Grid>
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="*" />
+                    </Grid.RowDefinitions>
+
+                    <!-- Queue / recognizing status -->
+                    <TextBlock x:Name="TxtQueueStatus"
+                               Grid.Row="0"
+                               Foreground="#666666"
+                               FontSize="12"
+                               Margin="0,0,0,8"
+                               TextWrapping="Wrap"
+                               Visibility="Collapsed" />
+
+                    <!-- 当前识别截图预览：等比缩放适应窗口 -->
+                    <Border x:Name="ImgPreviewHost"
+                            Grid.Row="1"
+                            Height="180"
+                            Margin="0,0,0,8"
+                            Background="#F0F0F0"
+                            CornerRadius="8"
+                            ClipToBounds="True"
+                            Visibility="Collapsed">
+                        <Image x:Name="ImgPreview"
+                               Stretch="Uniform"
+                               SnapsToDevicePixels="True"
+                               RenderOptions.BitmapScalingMode="HighQuality"
+                               HorizontalAlignment="Center"
+                               VerticalAlignment="Center" />
+                    </Border>
+
                     <!-- Search results -->
                     <ListBox x:Name="LstResults"
+                             Grid.Row="2"
                              Background="Transparent"
                              BorderThickness="0"
                              HorizontalContentAlignment="Stretch"
@@ -179,6 +214,7 @@
 
                     <!-- Holding import preview -->
                     <ListBox x:Name="LstImport"
+                             Grid.Row="2"
                              Background="Transparent"
                              BorderThickness="0"
                              HorizontalContentAlignment="Stretch"
@@ -240,6 +276,7 @@
 
                     <!-- Empty / Searching state -->
                     <TextBlock x:Name="TxtPlaceholder"
+                               Grid.Row="2"
                                Text="输入股票名称或代码搜索&#x0a;或 Ctrl+V 粘贴持仓截图"
                                Foreground="#AAAAAA"
                                FontSize="13"

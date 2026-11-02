@@ -6,7 +6,9 @@
         Background="Transparent"
         ResizeMode="NoResize"
         Width="470" Height="700"
-        WindowStartupLocation="CenterOwner"
+        WindowStartupLocation="CenterScreen"
+        ShowInTaskbar="False"
+        Topmost="False"
         Title="管理分组"
         MouseLeftButtonDown="Window_MouseLeftButtonDown">
 

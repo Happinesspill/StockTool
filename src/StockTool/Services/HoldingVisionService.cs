@@ -90,7 +90,7 @@ public static class HoldingVisionService
         {
             case "mimo":
                 endpoint = "https://api.xiaomimimo.com/v1/chat/completions";
-                model = "mimo-v2.5";
+                model = "mimo-v2.6-flash";
                 useApiKeyHeader = true;
                 break;
             default:

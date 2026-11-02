@@ -20,14 +20,19 @@ public partial class AddStockDialog : Window
     private readonly Func<HoldingVisionOptions?>? _getVisionOptions;
     private readonly Action? _openSettings;
     private CancellationTokenSource? _searchCts;
+    private CancellationTokenSource? _recognizeCts;
     private List<SearchResultItem> _results = [];
     private readonly ObservableCollection<HoldingImportPreviewItem> _importItems = [];
+    private readonly Queue<BitmapSource> _recognizeQueue = new();
     private bool _importMode;
+    private bool _recognizeLoopRunning;
 
     public string? SelectedInternalCode { get; private set; }
     public string? SelectedName { get; private set; }
     public string? SelectedMarket { get; private set; }
     public IReadOnlyList<HoldingImportItem> ImportedHoldings { get; private set; } = [];
+    /// <summary>非模态关闭时是否确认（同步持仓 / 添加）</summary>
+    public bool Confirmed { get; private set; }
 
     public AddStockDialog(
         EastMoneyClient client,
@@ -40,6 +45,7 @@ public partial class AddStockDialog : Window
         _searchFunds = searchFunds;
         _getVisionOptions = getVisionOptions;
         _openSettings = openSettings;
+        Closed += (_, _) => CancelRecognizeQueue();
         if (_searchFunds)
         {
             TxtTitle.Text = "添加基金";
@@ -164,7 +170,7 @@ public partial class AddStockDialog : Window
         SelectedInternalCode = item.InternalCode;
         SelectedName = item.Name;
         SelectedMarket = item.Market;
-        DialogResult = true;
+        Confirmed = true;
         Close();
     }
 
@@ -184,19 +190,24 @@ public partial class AddStockDialog : Window
 
         if (selected.Count == 0)
         {
-            MessageBox.Show(this, "请至少勾选一只已匹配的股票", "提示",
+            MessageBox.Show(this,
+                _searchFunds ? "请至少勾选一只已匹配的基金" : "请至少勾选一只已匹配的股票",
+                "提示",
                 MessageBoxButton.OK, MessageBoxImage.Information);
             return;
         }
 
+        // 已识别结果可直接确认；关闭时取消剩余队列
+        CancelRecognizeQueue();
         ImportedHoldings = selected;
-        DialogResult = true;
+        Confirmed = true;
         Close();
     }
 
     private void BtnCancel_Click(object sender, RoutedEventArgs e)
     {
-        DialogResult = false;
+        CancelRecognizeQueue();
+        Confirmed = false;
         Close();
     }
 
@@ -204,25 +215,26 @@ public partial class AddStockDialog : Window
     {
         if (e.Key == Key.Escape)
         {
-            DialogResult = false;
+            CancelRecognizeQueue();
+            Confirmed = false;
             Close();
         }
     }
 
-    private async void Window_PreviewKeyDown(object sender, KeyEventArgs e)
+    private void Window_PreviewKeyDown(object sender, KeyEventArgs e)
     {
         if (!IsPasteShortcut(e)) return;
         if (ClipboardImageHelper.TryGetImage() is null) return;
 
         e.Handled = true;
-        await ImportFromClipboardAsync();
+        EnqueueClipboardImage();
     }
 
-    private async void TxtSearch_Pasting(object sender, DataObjectPastingEventArgs e)
+    private void TxtSearch_Pasting(object sender, DataObjectPastingEventArgs e)
     {
         if (ClipboardImageHelper.TryGetImage() is null) return;
         e.CancelCommand();
-        await ImportFromClipboardAsync();
+        EnqueueClipboardImage();
     }
 
     private static bool IsPasteShortcut(KeyEventArgs e)
@@ -234,7 +246,8 @@ public partial class AddStockDialog : Window
         return false;
     }
 
-    private async Task ImportFromClipboardAsync()
+    // 入队后立即返回；识别在后台串行异步执行，期间可继续粘贴
+    private void EnqueueClipboardImage()
     {
         var options = _getVisionOptions?.Invoke();
         if (options is null || string.IsNullOrWhiteSpace(options.ApiKey))
@@ -269,24 +282,129 @@ public partial class AddStockDialog : Window
             return;
         }
 
-        string providerLabel = string.Equals(options.Provider, "mimo", StringComparison.OrdinalIgnoreCase)
-            ? "小米 MiMo"
-            : "DeepSeek";
-        string busyText = _searchFunds
-            ? $"正在用 {providerLabel} 识别基金持仓截图…"
-            : $"正在用 {providerLabel} 识别持仓截图…";
-        EnterImportBusy(busyText);
-        var (rows, error) = await HoldingVisionService.RecognizeAsync(image, options, isFund: _searchFunds);
-        if (!string.IsNullOrEmpty(error))
-        {
-            ExitImportMode();
-            MessageBox.Show(this, error, "识别失败", MessageBoxButton.OK, MessageBoxImage.Warning);
-            return;
-        }
+        EnterImportMode();
+        if (_recognizeCts is null || _recognizeCts.IsCancellationRequested)
+            _recognizeCts = new CancellationTokenSource();
+        _recognizeQueue.Enqueue(image);
+        // 空闲时立刻预览刚粘贴的图；识别中则等轮到时再切换
+        if (!_recognizeLoopRunning)
+            ShowPastedImage(image);
+        UpdateQueueStatus();
+        _ = ProcessRecognizeQueueAsync(options);
+    }
 
-        _importItems.Clear();
+    private async Task ProcessRecognizeQueueAsync(HoldingVisionOptions options)
+    {
+        if (_recognizeLoopRunning) return;
+        _recognizeLoopRunning = true;
+
+        try
+        {
+            while (_importMode && _recognizeQueue.Count > 0)
+            {
+                _recognizeCts ??= new CancellationTokenSource();
+                var token = _recognizeCts.Token;
+                if (token.IsCancellationRequested) break;
+
+                var image = _recognizeQueue.Dequeue();
+                ShowPastedImage(image);
+                UpdateQueueStatus();
+
+                List<ParsedHoldingRow> rows;
+                string? error;
+                try
+                {
+                    (rows, error) = await HoldingVisionService.RecognizeAsync(
+                        image, options, isFund: _searchFunds, ct: token);
+                }
+                catch (OperationCanceledException)
+                {
+                    break;
+                }
+                catch (Exception ex)
+                {
+                    UpdateQueueStatus();
+                    if (_importMode)
+                    {
+                        MessageBox.Show(this, ex.Message, "识别失败",
+                            MessageBoxButton.OK, MessageBoxImage.Warning);
+                    }
+                    continue;
+                }
+
+                if (!_importMode || token.IsCancellationRequested) break;
+
+                if (!string.IsNullOrEmpty(error))
+                {
+                    UpdateQueueStatus();
+                    if (error.Contains("已取消", StringComparison.Ordinal))
+                        break;
+                    if (_importMode)
+                    {
+                        MessageBox.Show(this, error, "识别失败",
+                            MessageBoxButton.OK, MessageBoxImage.Warning);
+                    }
+                    continue;
+                }
+
+                var added = AppendRecognizedRows(rows);
+                UpdateQueueStatus();
+                if (added.Count > 0)
+                    await MatchImportItemsAsync(added, token);
+            }
+        }
+        finally
+        {
+            _recognizeLoopRunning = false;
+            if (_importMode && _recognizeQueue.Count > 0
+                && _recognizeCts is { IsCancellationRequested: false })
+            {
+                UpdateQueueStatus();
+                _ = ProcessRecognizeQueueAsync(options);
+            }
+            else
+            {
+                // 队列空或已退出：不长期保留截图
+                if (_recognizeQueue.Count == 0)
+                    ClearPastedImage();
+                UpdateQueueStatus();
+            }
+        }
+    }
+
+    private void ShowPastedImage(BitmapSource image)
+    {
+        ImgPreview.Source = image;
+        ImgPreviewHost.Visibility = Visibility.Visible;
+    }
+
+    private void ClearPastedImage()
+    {
+        ImgPreview.Source = null;
+        ImgPreviewHost.Visibility = Visibility.Collapsed;
+    }
+
+    private List<HoldingImportPreviewItem> AppendRecognizedRows(IEnumerable<ParsedHoldingRow> rows)
+    {
+        var added = new List<HoldingImportPreviewItem>();
         foreach (var row in rows)
         {
+            var existing = FindExistingImportItem(row);
+            if (existing is not null)
+            {
+                existing.Shares = row.Shares;
+                existing.Cost = row.Cost;
+                existing.PreferHk = row.IsHk;
+                if (!string.IsNullOrWhiteSpace(row.Code))
+                    existing.Code = row.Code.Trim();
+                if (!existing.CanMatch)
+                {
+                    existing.Status = "匹配中…";
+                    added.Add(existing);
+                }
+                continue;
+            }
+
             var preview = new HoldingImportPreviewItem
             {
                 Name = row.Name,
@@ -297,16 +415,33 @@ public partial class AddStockDialog : Window
                 Status = "匹配中…"
             };
             _importItems.Add(preview);
+            added.Add(preview);
         }
 
         ShowImportList();
-        await MatchImportItemsAsync();
+        return added;
     }
 
-    private async Task MatchImportItemsAsync()
+    private HoldingImportPreviewItem? FindExistingImportItem(ParsedHoldingRow row)
     {
-        foreach (var item in _importItems.ToList())
+        if (!string.IsNullOrWhiteSpace(row.Code))
         {
+            var byCode = _importItems.FirstOrDefault(i =>
+                string.Equals(i.Code, row.Code.Trim(), StringComparison.OrdinalIgnoreCase));
+            if (byCode is not null) return byCode;
+        }
+
+        return _importItems.FirstOrDefault(i =>
+            string.Equals(i.Name, row.Name, StringComparison.OrdinalIgnoreCase));
+    }
+
+    private async Task MatchImportItemsAsync(
+        IReadOnlyList<HoldingImportPreviewItem> items,
+        CancellationToken token)
+    {
+        foreach (var item in items)
+        {
+            if (token.IsCancellationRequested) return;
             if (_searchFunds)
             {
                 await MatchFundItemAsync(item);
@@ -314,6 +449,8 @@ public partial class AddStockDialog : Window
             }
 
             var results = await _client.SearchAsync(item.Name);
+            if (token.IsCancellationRequested) return;
+
             var matched = PickBestMatch(results, item.Name, item.PreferHk);
             if (matched is null)
             {
@@ -411,21 +548,9 @@ public partial class AddStockDialog : Window
         return results[0];
     }
 
-    private void EnterImportBusy(string message)
+    private void EnterImportMode()
     {
-        _importMode = true;
-        SearchBar.Visibility = Visibility.Collapsed;
-        LstResults.Visibility = Visibility.Collapsed;
-        LstImport.Visibility = Visibility.Collapsed;
-        BtnSync.Visibility = Visibility.Collapsed;
-        BtnBack.Visibility = Visibility.Visible;
-        TxtPlaceholder.Visibility = Visibility.Visible;
-        TxtPlaceholder.Text = message;
-        TxtTitle.Text = _searchFunds ? "同步基金持仓" : "同步持仓";
-    }
-
-    private void ShowImportList()
-    {
+        if (_importMode) return;
         _importMode = true;
         SearchBar.Visibility = Visibility.Collapsed;
         LstResults.Visibility = Visibility.Collapsed;
@@ -434,11 +559,64 @@ public partial class AddStockDialog : Window
         TxtPlaceholder.Visibility = Visibility.Collapsed;
         BtnSync.Visibility = Visibility.Visible;
         BtnBack.Visibility = Visibility.Visible;
+        TxtQueueStatus.Visibility = Visibility.Visible;
         TxtTitle.Text = _searchFunds ? "同步基金持仓" : "同步持仓";
+    }
+
+    private void ShowImportList()
+    {
+        EnterImportMode();
+        LstImport.Visibility = Visibility.Visible;
+        TxtPlaceholder.Visibility = Visibility.Collapsed;
+    }
+
+    private void UpdateQueueStatus()
+    {
+        if (!_importMode)
+        {
+            TxtQueueStatus.Visibility = Visibility.Collapsed;
+            return;
+        }
+
+        // 队列中等待的 + 当前正在识别的（已出队）
+        int waiting = _recognizeQueue.Count;
+        bool busy = _recognizeLoopRunning;
+        int pending = waiting + (busy ? 1 : 0);
+
+        TxtQueueStatus.Visibility = Visibility.Visible;
+        if (pending > 0)
+        {
+            TxtQueueStatus.Text = waiting > 0
+                ? $"正在识别…队列等待 {waiting} 张，可继续粘贴；已匹配项可先同步"
+                : "正在识别…可继续粘贴加入队列；已匹配项可先同步";
+        }
+        else if (_importItems.Count == 0)
+        {
+            TxtQueueStatus.Text = "暂无识别结果，请 Ctrl+V 粘贴持仓截图";
+        }
+        else
+        {
+            TxtQueueStatus.Text = "识别完成，可继续粘贴补充，或勾选后同步持仓";
+        }
+    }
+
+    private void CancelRecognizeQueue()
+    {
+        _recognizeQueue.Clear();
+        try
+        {
+            _recognizeCts?.Cancel();
+        }
+        catch
+        {
+            // ignore
+        }
+        ClearPastedImage();
     }
 
     private void ExitImportMode()
     {
+        CancelRecognizeQueue();
         _importMode = false;
         _importItems.Clear();
         ImportedHoldings = [];
@@ -447,6 +625,8 @@ public partial class AddStockDialog : Window
         LstImport.ItemsSource = null;
         BtnSync.Visibility = Visibility.Collapsed;
         BtnBack.Visibility = Visibility.Collapsed;
+        TxtQueueStatus.Visibility = Visibility.Collapsed;
+        TxtQueueStatus.Text = "";
         TxtTitle.Text = _searchFunds ? "添加基金" : "添加自选";
         BtnClear.Visibility = string.IsNullOrEmpty(TxtSearch.Text) ? Visibility.Collapsed : Visibility.Visible;
         TxtPlaceholder.Visibility = Visibility.Visible;
@@ -496,11 +676,35 @@ public class HoldingImportPreviewItem : INotifyPropertyChanged
     private string _market = "";
     private string _internalCode = "";
     private string _matchedName = "";
+    private decimal _shares;
+    private decimal _cost;
 
     public string Name { get; set; } = "";
-    public decimal Shares { get; set; }
-    public decimal Cost { get; set; }
     public bool PreferHk { get; set; }
+
+    public decimal Shares
+    {
+        get => _shares;
+        set
+        {
+            if (_shares == value) return;
+            _shares = value;
+            OnPropertyChanged();
+            OnPropertyChanged(nameof(SharesText));
+        }
+    }
+
+    public decimal Cost
+    {
+        get => _cost;
+        set
+        {
+            if (_cost == value) return;
+            _cost = value;
+            OnPropertyChanged();
+            OnPropertyChanged(nameof(CostText));
+        }
+    }
 
     public string SharesText => Shares.ToString("0.####", CultureInfo.InvariantCulture);
     public string CostText => Cost.ToString("0.####", CultureInfo.InvariantCulture);

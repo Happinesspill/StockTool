@@ -9,13 +9,16 @@ public class EastMoneyClient
     private readonly HttpClient _http;
     private static readonly JsonSerializerOptions JsonOpts = new() { PropertyNameCaseInsensitive = true };
 
+    /// <summary>A 股报价源：eastmoney | tencent | sina</summary>
+    public string PreferredQuoteSource { get; set; } = "eastmoney";
+
     public EastMoneyClient()
     {
         System.Text.Encoding.RegisterProvider(System.Text.CodePagesEncodingProvider.Instance);
         _http = new HttpClient();
         _http.DefaultRequestHeaders.TryAddWithoutValidation("User-Agent",
             "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36");
-        _http.DefaultRequestHeaders.TryAddWithoutValidation("Referer", "https://finance.qq.com/");
+        // Referer 按接口分别设置，全局写腾讯 Referer 会导致东财 trends2 被断开
         _http.DefaultRequestHeaders.TryAddWithoutValidation("Accept", "*/*");
         _http.Timeout = TimeSpan.FromSeconds(8);
     }
@@ -129,20 +132,38 @@ public class EastMoneyClient
     {
         if (internalCodes.Count == 0) return [];
 
-        var tencentTask = GetTencentQuotesAsync(internalCodes);
-        var sinaTask = GetSinaQuotesAsync(internalCodes);
-
-        var tasks = new List<Task<List<QuoteItem>>> { tencentTask, sinaTask };
-        while (tasks.Count > 0)
+        // 按用户选择的行情源优先，失败再回退其余源
+        var order = PreferredQuoteSource?.Trim().ToLowerInvariant() switch
         {
-            var completed = await Task.WhenAny(tasks);
-            var result = await completed;
-            if (result.Count > 0 && result.Any(r => r.F2 > 0))
-                return result;
-            tasks.Remove(completed);
+            "tencent" => new Func<IReadOnlyList<string>, Task<List<QuoteItem>>>[]
+            {
+                GetTencentQuotesAsync, GetSinaQuotesAsync, GetEastMoneyQuotesAsync
+            },
+            "sina" =>
+            [
+                GetSinaQuotesAsync, GetTencentQuotesAsync, GetEastMoneyQuotesAsync
+            ],
+            _ =>
+            [
+                GetEastMoneyQuotesAsync, GetTencentQuotesAsync, GetSinaQuotesAsync
+            ]
+        };
+
+        foreach (var fetch in order)
+        {
+            try
+            {
+                var result = await fetch(internalCodes);
+                if (result.Count > 0 && result.Any(r => r.F2 > 0))
+                    return result;
+            }
+            catch
+            {
+                // try next
+            }
         }
 
-        return await GetEastMoneyQuotesAsync(internalCodes);
+        return [];
     }
 
     /// <summary>
@@ -214,7 +235,11 @@ public class EastMoneyClient
 
         try
         {
-            var bytes = await _http.GetByteArrayAsync(url);
+            using var req = new HttpRequestMessage(HttpMethod.Get, url);
+            req.Headers.TryAddWithoutValidation("Referer", "https://finance.sina.com.cn/");
+            using var resp = await _http.SendAsync(req);
+            if (!resp.IsSuccessStatusCode) return [];
+            var bytes = await resp.Content.ReadAsByteArrayAsync();
             string text;
             try { text = System.Text.Encoding.GetEncoding("GBK").GetString(bytes); }
             catch { text = System.Text.Encoding.UTF8.GetString(bytes); }
@@ -313,7 +338,11 @@ public class EastMoneyClient
         try
         {
             // 腾讯返回 GBK
-            var bytes = await _http.GetByteArrayAsync(url);
+            using var req = new HttpRequestMessage(HttpMethod.Get, url);
+            req.Headers.TryAddWithoutValidation("Referer", "https://finance.qq.com/");
+            using var resp = await _http.SendAsync(req);
+            if (!resp.IsSuccessStatusCode) return [];
+            var bytes = await resp.Content.ReadAsByteArrayAsync();
             string text;
             try
             {
@@ -383,24 +412,105 @@ public class EastMoneyClient
         => decimal.TryParse(s, System.Globalization.NumberStyles.Any,
             System.Globalization.CultureInfo.InvariantCulture, out value);
 
-    // ── Intraday（腾讯分时）──────────────────────────
+    // ── 汇率（港币 → 人民币中间价）──────────────────────────
+
+    private decimal? _cachedHkdCnyRate;
+    private DateTime _cachedHkdCnyAt = DateTime.MinValue;
+
+    /// <summary>港币兑人民币中间价（1 港币 = ? 人民币）。失败返回 null，沿用缓存。</summary>
+    public async Task<decimal?> GetHkdCnyRateAsync()
+    {
+        if (_cachedHkdCnyRate is > 0
+            && DateTime.Now - _cachedHkdCnyAt < TimeSpan.FromMinutes(10))
+            return _cachedHkdCnyRate;
+
+        // https://quote.eastmoney.com/cnyrate/HKDCNYC.html
+        string url = "https://push2.eastmoney.com/api/qt/stock/get"
+                     + "?secid=120.HKDCNYC&fields=f43,f60&fltt=2";
+        try
+        {
+            using var req = new HttpRequestMessage(HttpMethod.Get, url);
+            req.Headers.TryAddWithoutValidation("Referer", "https://quote.eastmoney.com/");
+            using var resp = await _http.SendAsync(req);
+            if (!resp.IsSuccessStatusCode) return _cachedHkdCnyRate;
+
+            string json = await resp.Content.ReadAsStringAsync();
+            using var doc = JsonDocument.Parse(json);
+            if (!doc.RootElement.TryGetProperty("data", out var data)
+                || data.ValueKind != JsonValueKind.Object)
+                return _cachedHkdCnyRate;
+
+            decimal rate = 0;
+            if (data.TryGetProperty("f43", out var f43))
+                rate = ReadDecimal(f43);
+            if (rate <= 0 && data.TryGetProperty("f60", out var f60))
+                rate = ReadDecimal(f60); // 昨收兜底
+
+            // 偶发按「100 港币」报价（如 85.6）
+            if (rate > 10m) rate /= 100m;
+            if (rate <= 0 || rate > 2m) return _cachedHkdCnyRate;
+
+            _cachedHkdCnyRate = rate;
+            _cachedHkdCnyAt = DateTime.Now;
+            return rate;
+        }
+        catch
+        {
+            return _cachedHkdCnyRate;
+        }
+    }
+
+    private static decimal ReadDecimal(JsonElement el) => el.ValueKind switch
+    {
+        JsonValueKind.Number => el.TryGetDecimal(out var d) ? d : 0,
+        JsonValueKind.String => TryParseDec(el.GetString() ?? "", out var d) ? d : 0,
+        _ => 0
+    };
+
+    // ── Intraday（腾讯 ifzq 分时优先，与 K 线同域；东财兜底）──────────────────────────
+
+    private static readonly string[] EastMoneyTrendHosts =
+    [
+        "https://push2.eastmoney.com",
+        "https://push2delay.eastmoney.com",
+        "https://82.push2.eastmoney.com",
+        "https://push2his.eastmoney.com"
+    ];
 
     public async Task<IntradaySeries?> GetIntradayAsync(string internalCode)
     {
-        // 场外基金无分时；场内 ETF/LOF 归一化为行情代码后走腾讯分时
+        // 场外基金无分时；场内 ETF/LOF 归一化为行情代码后取分时
         if (IsFundCode(internalCode) && !StockItem.IsExchangeFundCode(internalCode)) return null;
-        return await GetTencentIntradayAsync(StockItem.ToExchangeCode(internalCode));
+        string code = StockItem.ToExchangeCode(internalCode);
+
+        // web.ifzq 分时常被 WAF 501；ifzq.gtimg.cn 与 5 分/日 K 同域可用
+        var series = await GetTencentIntradayAsync(code);
+        if (series != null) return series;
+
+        series = await GetEastMoneyIntradayAsync(code);
+        if (series != null) return series;
+
+        // 最后用腾讯 1 分钟 K 线拼分时
+        return await GetTencentMinuteKlineAsIntradayAsync(code);
     }
 
     private async Task<IntradaySeries?> GetTencentIntradayAsync(string internalCode)
     {
-        // https://web.ifzq.gtimg.cn/appstock/app/minute/query?code=sh600036
+        // 注意：用 ifzq.gtimg.cn，不要用 web.ifzq.gtimg.cn（易被 WAF）
         string code = $"{internalCode[..2].ToLowerInvariant()}{internalCode[2..]}";
-        string url = $"https://web.ifzq.gtimg.cn/appstock/app/minute/query?code={code}";
+        string url = $"https://ifzq.gtimg.cn/appstock/app/minute/query?code={code}";
 
         try
         {
-            string json = await _http.GetStringAsync(url);
+            using var req = new HttpRequestMessage(HttpMethod.Get, url);
+            req.Headers.TryAddWithoutValidation("Referer", "https://finance.qq.com/");
+            using var resp = await _http.SendAsync(req);
+            if (!resp.IsSuccessStatusCode) return null;
+
+            string json = await resp.Content.ReadAsStringAsync();
+            if (string.IsNullOrWhiteSpace(json) || json.TrimStart().StartsWith('<'))
+                return null;
+
             using var doc = JsonDocument.Parse(json);
             if (!doc.RootElement.TryGetProperty("data", out var data) || data.ValueKind != JsonValueKind.Object)
                 return null;
@@ -435,7 +545,6 @@ public class EastMoneyClient
                 if (!TryParseDec(parts[1], out var price) || price <= 0) continue;
 
                 string minute = FormatMinute(parts[0]);
-                // 腾讯会给 A 股补 15:00 之后的静态点，按交易时段裁掉，避免收盘后趋势继续延伸
                 if (!IsInTradingSession(internalCode, minute)) continue;
 
                 prices.Add(price);
@@ -448,7 +557,6 @@ public class EastMoneyClient
 
             if (prices.Count < 2) return null;
 
-            // A股腾讯成交量为「手」(×100)；港股一般为股，不能再乘 100
             bool isHk = internalCode.StartsWith("HK", StringComparison.OrdinalIgnoreCase);
             var volumesForVwap = isHk
                 ? volumes
@@ -468,6 +576,152 @@ public class EastMoneyClient
         {
             return null;
         }
+    }
+
+    private async Task<IntradaySeries?> GetTencentMinuteKlineAsIntradayAsync(string internalCode)
+    {
+        // mkline m1：与 5 分 K 同接口，收盘价序列可作分时兜底
+        try
+        {
+            var bars = await GetKlineAsync(internalCode, period: 1, count: 300);
+            if (bars.Count < 2) return null;
+
+            var today = DateTime.Today;
+            var todayBars = bars.Where(b => b.Date.Date == today).ToList();
+            if (todayBars.Count < 2)
+                todayBars = bars.TakeLast(Math.Min(bars.Count, 240)).ToList();
+            if (todayBars.Count < 2) return null;
+
+            var prices = new List<decimal>(todayBars.Count);
+            var times = new List<string>(todayBars.Count);
+            foreach (var bar in todayBars)
+            {
+                if (bar.Close <= 0) continue;
+                string minute = bar.Date.ToString("HH:mm");
+                if (!IsInTradingSession(internalCode, minute)) continue;
+                prices.Add(bar.Close);
+                times.Add(minute);
+            }
+
+            if (prices.Count < 2) return null;
+
+            var avgs = new List<decimal>(prices.Count);
+            decimal sum = 0;
+            for (int i = 0; i < prices.Count; i++)
+            {
+                sum += prices[i];
+                avgs.Add(sum / (i + 1));
+            }
+
+            return new IntradaySeries
+            {
+                Prices = prices,
+                AvgPrices = avgs,
+                Times = times
+            };
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    private async Task<IntradaySeries?> GetEastMoneyIntradayAsync(string internalCode)
+    {
+        // https://push2.eastmoney.com/api/qt/stock/trends2/get?secid=1.601336&ndays=1
+        string secid;
+        try
+        {
+            secid = ToSecId(internalCode);
+        }
+        catch
+        {
+            return null;
+        }
+
+        string path = "/api/qt/stock/trends2/get" +
+                      "?fields1=f1,f2,f3,f4,f5,f6,f7,f8,f9,f10,f11,f12,f13" +
+                      "&fields2=f51,f52,f53,f54,f55,f56,f57,f58" +
+                      "&ut=fa5fd1943c7b386f172d6893dbfba10b" +
+                      $"&ndays=1&iscr=0&secid={Uri.EscapeDataString(secid)}";
+
+        foreach (var host in EastMoneyTrendHosts)
+        {
+            try
+            {
+                var series = await FetchEastMoneyTrendsAsync(host + path, internalCode);
+                if (series != null) return series;
+            }
+            catch
+            {
+                // try next host
+            }
+        }
+
+        return null;
+    }
+
+    private async Task<IntradaySeries?> FetchEastMoneyTrendsAsync(string url, string internalCode)
+    {
+        using var req = new HttpRequestMessage(HttpMethod.Get, url);
+        req.Headers.TryAddWithoutValidation("Referer", "https://quote.eastmoney.com/");
+        using var resp = await _http.SendAsync(req);
+        if (!resp.IsSuccessStatusCode) return null;
+
+        string json = await resp.Content.ReadAsStringAsync();
+        if (string.IsNullOrWhiteSpace(json) || json.TrimStart().StartsWith('<'))
+            return null;
+
+        using var doc = JsonDocument.Parse(json);
+        if (!doc.RootElement.TryGetProperty("data", out var data) || data.ValueKind != JsonValueKind.Object)
+            return null;
+        if (!data.TryGetProperty("trends", out var arr) || arr.ValueKind != JsonValueKind.Array)
+            return null;
+
+        var prices = new List<decimal>();
+        var avgs = new List<decimal>();
+        var times = new List<string>();
+
+        foreach (var item in arr.EnumerateArray())
+        {
+            // "2026-11-02 09:30,50.25,50.25,50.25,50.25,2965,14899125.00,50.250"
+            //  → 日期时间,开,收/现价,高,低,量,额,均价
+            string? line = item.ValueKind == JsonValueKind.String ? item.GetString() : null;
+            if (string.IsNullOrWhiteSpace(line)) continue;
+            var parts = line.Split(',');
+            if (parts.Length < 3) continue;
+            if (!TryParseDec(parts[2], out var price) || price <= 0) continue;
+
+            string minute = ExtractTrendMinute(parts[0]);
+            if (!IsInTradingSession(internalCode, minute)) continue;
+
+            prices.Add(price);
+            times.Add(minute);
+            if (parts.Length > 7 && TryParseDec(parts[7], out var avg) && avg > 0)
+                avgs.Add(avg);
+            else
+                avgs.Add(price);
+        }
+
+        if (prices.Count < 2) return null;
+
+        avgs = SanitizeAvgAgainstPrice(prices, avgs);
+        return new IntradaySeries
+        {
+            Prices = prices,
+            AvgPrices = avgs,
+            Times = times
+        };
+    }
+
+    /// <summary>"2026-11-02 09:30" / "09:30" → "09:30"</summary>
+    private static string ExtractTrendMinute(string raw)
+    {
+        string s = raw.Trim();
+        int space = s.LastIndexOf(' ');
+        if (space >= 0 && space < s.Length - 1)
+            s = s[(space + 1)..];
+        return FormatMinute(s.Replace(":", ""));
     }
 
     /// <summary>"0930" → "09:30"；兼容 12 位时间戳，异常时原样返回</summary>
@@ -839,12 +1093,12 @@ public class EastMoneyClient
             if (!StockItem.IsExchangeFundCode(internalCode)) return [];
             internalCode = StockItem.ToExchangeCode(internalCode);
         }
-        // period: 5=m5, 15=m15, 30=m30, 60=m60, 101=day, 102=week
+        // period: 1=m1, 5=m5, 15=m15, 30=m30, 60=m60, 101=day, 102=week
         string prefix = TencentPrefix(internalCode);
         string code = prefix + internalCode[2..];
         string url;
 
-        if (period is 5 or 15 or 30 or 60)
+        if (period is 1 or 5 or 15 or 30 or 60)
         {
             string p = $"m{period}";
             url = $"https://ifzq.gtimg.cn/appstock/app/kline/mkline?param={code},{p},,{count}";
@@ -857,7 +1111,14 @@ public class EastMoneyClient
 
         try
         {
-            string json = await _http.GetStringAsync(url);
+            using var req = new HttpRequestMessage(HttpMethod.Get, url);
+            req.Headers.TryAddWithoutValidation("Referer", "https://finance.qq.com/");
+            using var resp = await _http.SendAsync(req);
+            if (!resp.IsSuccessStatusCode) return [];
+            string json = await resp.Content.ReadAsStringAsync();
+            if (string.IsNullOrWhiteSpace(json) || json.TrimStart().StartsWith('<'))
+                return [];
+
             using var doc = JsonDocument.Parse(json);
             var root = doc.RootElement;
 

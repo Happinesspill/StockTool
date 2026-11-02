@@ -321,8 +321,7 @@ public partial class ManageGroupsWindow : Window
             Background = Brushes.Transparent,
             ResizeMode = ResizeMode.NoResize,
             Owner = this,
-            WindowStartupLocation = WindowStartupLocation.CenterOwner,
-            Topmost = true
+            WindowStartupLocation = WindowStartupLocation.CenterOwner
         };
 
         string? result = null;

@@ -28,8 +28,11 @@ public class AppConfig
     public string Hotkey { get; set; } = "Ctrl+Shift+S";
     public bool Topmost { get; set; } = true;
     public bool ShowMarketTag { get; set; } = true;
-    /// <summary>列表列宽：持仓/基金各自独立，其余分组共用 SharedListColumnWidthsId</summary>
+    /// <summary>A 股报价源：eastmoney | tencent | sina</summary>
+    public string QuoteDataSource { get; set; } = "eastmoney";
+    /// <summary>列表列宽：每个分组各自独立存储于 ColumnWidthsByGroup</summary>
     public Dictionary<string, ListColumnWidths> ColumnWidthsByGroup { get; set; } = new();
+    // 旧版共用列宽 key，仅用于迁移为各分组独立列宽
     public const string SharedListColumnWidthsId = "__shared__";
     // 旧版全局列宽，仅用于迁移到 ColumnWidthsByGroup
     public double NameColWidth { get; set; } = 130;
@@ -109,6 +112,8 @@ public class AppConfig
             SortColumn = "default";
         if (ListDensity is not ("moderate" or "compact"))
             ListDensity = "moderate";
+        if (QuoteDataSource is not ("eastmoney" or "tencent" or "sina"))
+            QuoteDataSource = "eastmoney";
 
         EnsureHomeIndicesMigrated();
         EnsureColumnWidthsMigrated();
@@ -132,66 +137,68 @@ public class AppConfig
             HomeIndexCodes = IndexCatalog.DefaultHomeCodes.ToList();
     }
 
-    // 补齐共用/持仓/基金列宽；普通分组统一走 SharedListColumnWidthsId
+    // 为每个分组补齐独立列宽；旧版共用/全局列宽作为初始种子
     public void EnsureColumnWidthsMigrated()
     {
         ColumnWidthsByGroup ??= new Dictionary<string, ListColumnWidths>();
         bool seedFromLegacy = ColumnWidthsByGroup.Count == 0;
 
-        ListColumnWidths CreateDefault() => seedFromLegacy
-            ? new ListColumnWidths
-            {
-                Name = NameColWidth,
-                HoldingAmount = HoldingAmountColWidth,
-                HoldingProfit = HoldingProfitColWidth,
-                HoldingShares = HoldingSharesColWidth,
-                Trend = TrendColWidth,
-                Price = PriceColWidth
-            }
-            : new ListColumnWidths();
-
-        if (!ColumnWidthsByGroup.ContainsKey(SharedListColumnWidthsId))
+        // 迁移种子：优先旧共用列宽，其次旧版按分组存的列宽
+        ListColumnWidths? seed = null;
+        if (ColumnWidthsByGroup.TryGetValue(SharedListColumnWidthsId, out var shared))
+        {
+            seed = shared;
+        }
+        else
         {
             var seedGroup = Groups.FirstOrDefault(g => g.Name == "自选")
                 ?? Groups.FirstOrDefault(g => g.Name != "基金");
             if (seedGroup != null && ColumnWidthsByGroup.TryGetValue(seedGroup.Id, out var existing))
-                ColumnWidthsByGroup[SharedListColumnWidthsId] = CloneColumnWidths(existing);
-            else
-                ColumnWidthsByGroup[SharedListColumnWidthsId] = CreateDefault();
+                seed = existing;
         }
+
+        ListColumnWidths CreateDefault() => seed != null
+            ? CloneColumnWidths(seed)
+            : seedFromLegacy
+                ? new ListColumnWidths
+                {
+                    Name = NameColWidth,
+                    HoldingAmount = HoldingAmountColWidth,
+                    HoldingProfit = HoldingProfitColWidth,
+                    HoldingShares = HoldingSharesColWidth,
+                    Trend = TrendColWidth,
+                    Price = PriceColWidth
+                }
+                : new ListColumnWidths();
 
         if (!ColumnWidthsByGroup.ContainsKey(WatchlistGroup.HoldingGroupId))
             ColumnWidthsByGroup[WatchlistGroup.HoldingGroupId] = CreateDefault();
 
-        foreach (var g in Groups.Where(g => g.Name == "基金"))
+        foreach (var g in Groups)
         {
             if (!ColumnWidthsByGroup.ContainsKey(g.Id))
                 ColumnWidthsByGroup[g.Id] = CreateDefault();
         }
 
+        // 清理已删除分组及旧共用 key 的残留
         var keep = new HashSet<string>(StringComparer.Ordinal)
         {
-            SharedListColumnWidthsId,
             WatchlistGroup.HoldingGroupId
         };
-        foreach (var g in Groups.Where(g => g.Name == "基金"))
+        foreach (var g in Groups)
             keep.Add(g.Id);
 
         foreach (var key in ColumnWidthsByGroup.Keys.Where(k => !keep.Contains(k)).ToList())
             ColumnWidthsByGroup.Remove(key);
     }
 
-    // 持仓/基金各自独立；其余分组共用一套列宽
+    // 每个分组各自独立一套列宽
     public string ResolveColumnWidthsKey(string groupId)
     {
-        if (string.IsNullOrEmpty(groupId) || groupId == WatchlistGroup.HoldingGroupId)
+        if (string.IsNullOrEmpty(groupId))
             return WatchlistGroup.HoldingGroupId;
 
-        var group = Groups.FirstOrDefault(g => g.Id == groupId);
-        if (group != null && group.Name == "基金")
-            return group.Id;
-
-        return SharedListColumnWidthsId;
+        return groupId;
     }
 
     // 取分组对应列宽，不存在则按默认创建

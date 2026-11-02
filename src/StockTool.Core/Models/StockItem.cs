@@ -26,6 +26,7 @@ public class StockItem : INotifyPropertyChanged
     private decimal _floatMarketValue;
     private decimal _holdingShares;
     private decimal _holdingCost;
+    private decimal _fxToCny = 1m;
     private bool _hasFundValuation;
     private List<decimal> _intradayPoints = [];
     private List<decimal> _intradayAvgPoints = [];
@@ -82,6 +83,7 @@ public class StockItem : INotifyPropertyChanged
             OnPropertyChanged();
             OnPropertyChanged(nameof(CodeNumeric));
             OnPropertyChanged(nameof(IsFund));
+            OnPropertyChanged(nameof(IsHk));
             OnPropertyChanged(nameof(PriceText));
             OnPropertyChanged(nameof(IntradaySlotCount));
         }
@@ -97,17 +99,41 @@ public class StockItem : INotifyPropertyChanged
             _market = value;
             OnPropertyChanged();
             OnPropertyChanged(nameof(IsFund));
+            OnPropertyChanged(nameof(IsHk));
             OnPropertyChanged(nameof(PriceText));
             OnPropertyChanged(nameof(IntradaySlotCount));
         }
     }
 
-    // 分时全日槽位数：A 股 242（含 15:00），港股 332（含 16:00）
-    public int IntradaySlotCount =>
+    public bool IsHk =>
         string.Equals(_market, "港股", StringComparison.OrdinalIgnoreCase)
-        || _code.StartsWith("HK", StringComparison.OrdinalIgnoreCase)
-            ? 332
-            : 242;
+        || _code.StartsWith("HK", StringComparison.OrdinalIgnoreCase);
+
+    // 分时全日槽位数：A 股 242（含 15:00），港股 332（含 16:00）
+    public int IntradaySlotCount => IsHk ? 332 : 242;
+
+    /// <summary>
+    /// 持仓金额/盈亏折算人民币汇率。A 股为 1；港股为当日港币兑人民币中间价。
+    /// 股价本身仍按港币展示。
+    /// </summary>
+    public decimal FxToCny
+    {
+        get => _fxToCny <= 0 ? 1m : _fxToCny;
+        set
+        {
+            decimal next = value <= 0 ? 1m : value;
+            if (_fxToCny == next) return;
+            _fxToCny = next;
+            OnPropertyChanged();
+            OnPropertyChanged(nameof(HoldingProfit));
+            OnPropertyChanged(nameof(TodayHoldingProfit));
+            OnPropertyChanged(nameof(TodayEstimateProfitText));
+            OnPropertyChanged(nameof(MarketValue));
+            OnPropertyChanged(nameof(HoldingAmount));
+            OnPropertyChanged(nameof(HoldingAmountText));
+            OnPropertyChanged(nameof(HoldingListMarketValueText));
+        }
+    }
 
     // 场外基金走天天基金估值接口；场内 ETF/LOF 与股票一样走行情接口
     public bool IsFund =>
@@ -200,7 +226,12 @@ public class StockItem : INotifyPropertyChanged
 
     public bool IsUp => _changePercent >= 0;
 
-    public string PriceText => IsFund ? $"{_currentPrice:F4}" : $"{_currentPrice:F2}";
+    // 港股现价按港币显示；持仓/盈亏另按 FxToCny 折人民币
+    public string PriceText => IsFund
+        ? $"{_currentPrice:F4}"
+        : IsHk
+            ? $"HK${_currentPrice:F2}"
+            : $"{_currentPrice:F2}";
 
     // 基金是否拿到盘中估算净值
     public bool HasFundValuation
@@ -376,19 +407,22 @@ public class StockItem : INotifyPropertyChanged
                 : $"{_holdingShares:0.##}")
             : "--";
 
-    // 基金盈亏按最新净值；股票按现价
+    // 基金盈亏按最新净值；股票按现价（港股为港币）
     private decimal HoldingMarkPrice => IsFund && _yesterdayClose > 0 ? _yesterdayClose : _currentPrice;
 
-    public decimal HoldingProfit => HasHolding ? (HoldingMarkPrice - _holdingCost) * _holdingShares : 0;
+    // 港股：成本/现价均为港币，盈亏折人民币
+    public decimal HoldingProfit => HasHolding
+        ? (HoldingMarkPrice - _holdingCost) * _holdingShares * FxToCny
+        : 0;
 
     public decimal HoldingProfitPercent => HasHolding && _holdingCost > 0
         ? (HoldingMarkPrice - _holdingCost) / _holdingCost * 100m
         : 0;
 
-    // 按估值相对净值估算今日盈利
+    // 按估值相对净值估算今日盈利（港股折人民币）
     public decimal TodayHoldingProfit =>
         HasHolding && _yesterdayClose > 0 && (!IsFund || _hasFundValuation)
-            ? (_currentPrice - _yesterdayClose) * _holdingShares
+            ? (_currentPrice - _yesterdayClose) * _holdingShares * FxToCny
             : 0;
 
     public string TodayEstimateProfitText =>
@@ -396,10 +430,11 @@ public class StockItem : INotifyPropertyChanged
             ? "--"
             : $"{TodayHoldingProfit:+0.##;-0.##;0.##}";
 
-    public decimal MarketValue => _currentPrice * _holdingShares;
+    // 持仓市值：港股按当日汇率折人民币
+    public decimal MarketValue => _currentPrice * _holdingShares * FxToCny;
 
-    // 基金持有金额按最新净值×份额；股票按现价×数量
-    public decimal HoldingAmount => HasHolding ? HoldingMarkPrice * _holdingShares : 0;
+    // 基金持有金额按最新净值×份额；股票按现价×数量（港股折人民币）
+    public decimal HoldingAmount => HasHolding ? HoldingMarkPrice * _holdingShares * FxToCny : 0;
 
     public string HoldingAmountText => HasHolding ? $"{HoldingAmount:F2}" : "--";
 

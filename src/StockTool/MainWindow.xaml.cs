@@ -25,6 +25,11 @@ public partial class MainWindow : Window
     /// <summary>遮罩点击收起后，短暂忽略列表拖拽/点击，避免穿透。</summary>
     private bool _suppressListInput;
 
+    // 二级页面（非模态，不继承主窗置顶）
+    private AddStockDialog? _addStockDialog;
+    private SettingsWindow? _settingsWindow;
+    private ManageGroupsWindow? _manageGroupsWindow;
+
     public event Action<string>? SettingsChanged;
 
     public MainWindow(MainViewModel viewModel, EastMoneyClient client)
@@ -60,23 +65,49 @@ public partial class MainWindow : Window
 
     private void BtnAdd_Click(object sender, RoutedEventArgs e)
     {
-        var dialog = new AddStockDialog(_client, VM.IsFundGroup, VM.GetHoldingVisionOptions, OpenSettings) { Owner = this };
-        if (dialog.ShowDialog() != true) return;
+        OpenAddStockDialog();
+    }
 
-        if (dialog.ImportedHoldings.Count > 0)
+    private void OpenAddStockDialog()
+    {
+        if (_addStockDialog != null)
         {
-            if (VM.IsFundGroup)
-                VM.SyncFundHoldingsFromImport(dialog.ImportedHoldings);
-            else
-                VM.SyncHoldingsFromImport(dialog.ImportedHoldings);
+            if (_addStockDialog.WindowState == WindowState.Minimized)
+                _addStockDialog.WindowState = WindowState.Normal;
+            _addStockDialog.Activate();
             return;
         }
 
-        if (!string.IsNullOrEmpty(dialog.SelectedInternalCode)
-            && !string.IsNullOrEmpty(dialog.SelectedName))
+        var dialog = new AddStockDialog(_client, VM.IsFundGroup, VM.GetHoldingVisionOptions, OpenSettings)
         {
-            VM.AddStock(dialog.SelectedInternalCode, dialog.SelectedName, dialog.SelectedMarket ?? "");
-        }
+            // 不设 Owner / Topmost：主窗可点，二级不强制置顶；置顶仅主窗绑定
+            WindowStartupLocation = WindowStartupLocation.CenterScreen,
+            ShowInTaskbar = false,
+            Topmost = false
+        };
+        dialog.Closed += (_, _) =>
+        {
+            var closed = _addStockDialog;
+            _addStockDialog = null;
+            if (closed is not { Confirmed: true }) return;
+
+            if (closed.ImportedHoldings.Count > 0)
+            {
+                if (VM.IsFundGroup)
+                    VM.SyncFundHoldingsFromImport(closed.ImportedHoldings);
+                else
+                    VM.SyncHoldingsFromImport(closed.ImportedHoldings);
+                return;
+            }
+
+            if (!string.IsNullOrEmpty(closed.SelectedInternalCode)
+                && !string.IsNullOrEmpty(closed.SelectedName))
+            {
+                VM.AddStock(closed.SelectedInternalCode, closed.SelectedName, closed.SelectedMarket ?? "");
+            }
+        };
+        _addStockDialog = dialog;
+        dialog.Show();
     }
 
     private void BtnSettings_Click(object sender, RoutedEventArgs e)
@@ -92,6 +123,14 @@ public partial class MainWindow : Window
 
     public void OpenSettings()
     {
+        if (_settingsWindow != null)
+        {
+            if (_settingsWindow.WindowState == WindowState.Minimized)
+                _settingsWindow.WindowState = WindowState.Normal;
+            _settingsWindow.Activate();
+            return;
+        }
+
         var dialog = new SettingsWindow(
             VM.Opacity,
             VM.FontSize,
@@ -104,23 +143,32 @@ public partial class MainWindow : Window
             VM.MimoApiKey,
             VM)
         {
-            Owner = this
+            WindowStartupLocation = WindowStartupLocation.CenterScreen,
+            ShowInTaskbar = false,
+            Topmost = false
         };
 
-        if (dialog.ShowDialog() == true)
+        dialog.Closed += (_, _) =>
         {
+            var closed = _settingsWindow;
+            _settingsWindow = null;
+            if (closed is not { Confirmed: true }) return;
+
             VM.SaveSettings(
-                dialog.OpacityValue,
-                dialog.FontSizeValue,
-                dialog.RefreshInterval,
-                dialog.Hotkey,
-                dialog.IsTopmost,
-                dialog.ShowMarketTag,
-                dialog.HoldingVisionProvider,
-                dialog.DeepSeekApiKey,
-                dialog.MimoApiKey);
-            SettingsChanged?.Invoke(dialog.Hotkey);
-        }
+                closed.OpacityValue,
+                closed.FontSizeValue,
+                closed.RefreshInterval,
+                closed.Hotkey,
+                closed.IsTopmost,
+                closed.ShowMarketTag,
+                closed.HoldingVisionProvider,
+                closed.DeepSeekApiKey,
+                closed.MimoApiKey);
+            SettingsChanged?.Invoke(closed.Hotkey);
+        };
+
+        _settingsWindow = dialog;
+        dialog.Show();
     }
 
     public void ToggleVisibility()
@@ -178,6 +226,12 @@ public partial class MainWindow : Window
     }
 
     // ── Drag-Drop Reorder ───────────────────────────
+
+    private void BtnCycleQuoteSource_Click(object sender, RoutedEventArgs e)
+    {
+        VM.CycleQuoteDataSource();
+        e.Handled = true;
+    }
 
     private void BtnSortPrice_Click(object sender, RoutedEventArgs e)
     {
@@ -242,8 +296,23 @@ public partial class MainWindow : Window
 
     private void BtnManageGroups_Click(object sender, RoutedEventArgs e)
     {
-        var dlg = new ManageGroupsWindow(VM) { Owner = this };
-        dlg.ShowDialog();
+        if (_manageGroupsWindow != null)
+        {
+            if (_manageGroupsWindow.WindowState == WindowState.Minimized)
+                _manageGroupsWindow.WindowState = WindowState.Normal;
+            _manageGroupsWindow.Activate();
+            return;
+        }
+
+        var dlg = new ManageGroupsWindow(VM)
+        {
+            WindowStartupLocation = WindowStartupLocation.CenterScreen,
+            ShowInTaskbar = false,
+            Topmost = false
+        };
+        dlg.Closed += (_, _) => _manageGroupsWindow = null;
+        _manageGroupsWindow = dlg;
+        dlg.Show();
     }
 
     private string? PromptSimpleText(string title, string placeholder)
@@ -258,8 +327,7 @@ public partial class MainWindow : Window
             Background = Brushes.Transparent,
             ResizeMode = ResizeMode.NoResize,
             Owner = this,
-            WindowStartupLocation = WindowStartupLocation.CenterOwner,
-            Topmost = true
+            WindowStartupLocation = WindowStartupLocation.CenterOwner
         };
 
         string? result = null;
@@ -320,13 +388,15 @@ public partial class MainWindow : Window
 
     private void StockList_PreviewMouseLeftButtonDown(object sender, MouseButtonEventArgs e)
     {
+        // 始终记录按下起点，避免排序等禁用拖拽时 _dragStart 残留旧坐标导致点击被误判为拖拽
+        _dragStart = e.GetPosition(null);
+
         if (_suppressListInput || VM.SelectedStock != null || !VM.CanReorder)
         {
             _draggedItem = null;
             return;
         }
 
-        _dragStart = e.GetPosition(null);
         _draggedItem = FindStockItemAtMouse(e);
     }
 
@@ -586,7 +656,6 @@ public partial class MainWindow : Window
             AllowsTransparency = true,
             Background = Brushes.Transparent,
             ResizeMode = ResizeMode.NoResize,
-            Topmost = true,
             Owner = owner,
             WindowStartupLocation = WindowStartupLocation.CenterOwner,
             ShowInTaskbar = false
@@ -745,7 +814,6 @@ public partial class MainWindow : Window
             AllowsTransparency = true,
             Background = Brushes.Transparent,
             ResizeMode = ResizeMode.NoResize,
-            Topmost = true,
             Owner = owner,
             WindowStartupLocation = WindowStartupLocation.CenterOwner,
             ShowInTaskbar = false
@@ -857,7 +925,6 @@ public partial class MainWindow : Window
             AllowsTransparency = true,
             Background = Brushes.Transparent,
             ResizeMode = ResizeMode.NoResize,
-            Topmost = true,
             Owner = owner,
             WindowStartupLocation = WindowStartupLocation.CenterOwner,
             ShowInTaskbar = false

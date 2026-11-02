@@ -1117,12 +1117,33 @@
             <Border Grid.Row="2"
                 Background="#18FFFFFF"
                 CornerRadius="0,0,8,8"
-                Padding="10,0">
+                Padding="10,0"
+                Height="24">
                 <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
                     <Ellipse Width="6" Height="6" Fill="#34C759" Margin="0,0,6,0" />
-                    <TextBlock Text="{Binding StatusSourceText}"
-                           Foreground="#50FFFFFF"
-                           FontSize="10" />
+                    <Button Content="{Binding StatusSourceText}"
+                            Click="BtnCycleQuoteSource_Click"
+                            Cursor="Hand"
+                            ToolTip="点击切换行情数据源"
+                            IsEnabled="{Binding CanCycleQuoteDataSource}">
+                        <Button.Template>
+                            <ControlTemplate TargetType="Button">
+                                <TextBlock x:Name="Label"
+                                           Text="{TemplateBinding Content}"
+                                           Foreground="#9AA3AF"
+                                           FontSize="10"
+                                           VerticalAlignment="Center" />
+                                <ControlTemplate.Triggers>
+                                    <Trigger Property="IsMouseOver" Value="True">
+                                        <Setter TargetName="Label" Property="Foreground" Value="#C5CCD6" />
+                                    </Trigger>
+                                    <Trigger Property="IsEnabled" Value="False">
+                                        <Setter TargetName="Label" Property="Foreground" Value="#6B7280" />
+                                    </Trigger>
+                                </ControlTemplate.Triggers>
+                            </ControlTemplate>
+                        </Button.Template>
+                    </Button>
                 </StackPanel>
             </Border>
 

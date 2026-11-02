@@ -1,4 +1,4 @@
-using System.Collections.ObjectModel;
+﻿using System.Collections.ObjectModel;
 using System.ComponentModel;
 using System.Runtime.CompilerServices;
 using System.Windows;
@@ -18,12 +18,15 @@ public class MainViewModel : INotifyPropertyChanged
     public const int FixedGroupCount = 2;
 
     private readonly ConfigStore _configStore;
+    private readonly EastMoneyClient _eastMoneyClient;
     private readonly QuoteService _quoteService;
     private readonly IntradayService _intradayService;
     private readonly FundNavService _fundNavService;
     private readonly FundDcaService _fundDcaService;
     private AppConfig _config;
     private FundPortfolioConfig _funds;
+
+    private static readonly string[] QuoteSources = ["eastmoney", "tencent", "sina"];
 
     public ObservableCollection<StockItem> Stocks { get; } = [];
     public ObservableCollection<StockItem> VisibleStocks { get; } = [];
@@ -177,6 +180,9 @@ public class MainViewModel : INotifyPropertyChanged
             OnPropertyChanged(nameof(HoldingTodayProfitText));
             OnPropertyChanged(nameof(HoldingTodayProfitDetails));
             OnPropertyChanged(nameof(StatusSourceText));
+            OnPropertyChanged(nameof(CanCycleQuoteDataSource));
+            OnPropertyChanged(nameof(CanReorder));
+            OnPropertyChanged(nameof(HoldingAmountSortArrow));
             if (!ShowHoldingColumn && string.Equals(SortColumn, "profit", StringComparison.OrdinalIgnoreCase))
             {
                 SortColumn = "default";
@@ -345,13 +351,42 @@ public class MainViewModel : INotifyPropertyChanged
         OnPropertyChanged(nameof(PriceColumnWidth));
     }
 
-    public string PriceColumnHeader => IsFundGroup ? "预估盈利/涨幅" : "涨幅";
+    public string PriceColumnHeader => IsFundGroup ? "预估/涨幅" : "涨幅";
 
     public string NameColumnHeader => IsHoldingGroupSelected ? "市值" : "名称";
 
     public string HoldingProfitColumnHeader => IsFundGroup ? "持有收益" : "盈亏";
 
-    public string StatusSourceText => IsFundGroup ? "数据来源：天天基金 | 仅供参考" : "数据来源：东方财富 | 仅供参考";
+    public string StatusSourceText => IsFundGroup
+        ? "数据来源：天天基金 | 仅供参考"
+        : $"数据来源：{QuoteDataSourceLabel} | 仅供参考";
+
+    public string QuoteDataSourceLabel => _config.QuoteDataSource?.Trim().ToLowerInvariant() switch
+    {
+        "tencent" => "腾讯",
+        "sina" => "新浪",
+        _ => "东方财富"
+    };
+
+    public bool CanCycleQuoteDataSource => !IsFundGroup;
+
+    public void CycleQuoteDataSource()
+    {
+        if (IsFundGroup) return;
+
+        string current = (_config.QuoteDataSource ?? "eastmoney").Trim().ToLowerInvariant();
+        int idx = Array.IndexOf(QuoteSources, current);
+        if (idx < 0) idx = 0;
+        string next = QuoteSources[(idx + 1) % QuoteSources.Length];
+        _config.QuoteDataSource = next;
+        _eastMoneyClient.PreferredQuoteSource = next;
+        _configStore.Save(_config);
+        OnPropertyChanged(nameof(StatusSourceText));
+        OnPropertyChanged(nameof(QuoteDataSourceLabel));
+        // 立即按新数据源拉行情（若定时刷新正在进行，结束后会再拉一次）
+        _ = _quoteService.RefreshNowAsync();
+        _ = _intradayService.LoadAllAsync();
+    }
 
     public string SortMode
     {
@@ -408,14 +443,19 @@ public class MainViewModel : INotifyPropertyChanged
     public string SortArrowText => SortColumn == "default" ? "" : (SortDescending ? "▾" : "▴");
     public string ChangeSortArrow => GetSortArrow("change");
     public string ProfitSortArrow => GetSortArrow("profit");
-    public string HoldingAmountSortArrow => GetSortArrow("holdingAmount");
+    // 基金列表默认按持有金额降序，表头显示对应箭头
+    public string HoldingAmountSortArrow =>
+        IsFundGroup && SortColumn == "default"
+            ? "▾"
+            : GetSortArrow("holdingAmount");
     public string HoldingSharesSortArrow => GetSortArrow("holdingShares");
     public string TurnoverSortArrow => GetSortArrow("turnover");
     public string TurnoverRateSortArrow => GetSortArrow("turnoverRate");
     public string SpeedSortArrow => GetSortArrow("speed");
     public string VolumeRatioSortArrow => GetSortArrow("volumeRatio");
     public string MarketValueSortArrow => GetSortArrow("marketValue");
-    public bool CanReorder => SortColumn == "default";
+    // 基金默认按金额排序，不允许拖拽改序
+    public bool CanReorder => SortColumn == "default" && !IsFundGroup;
 
     private StockItem? _selectedStock;
     public StockItem? SelectedStock
@@ -449,8 +489,10 @@ public class MainViewModel : INotifyPropertyChanged
     public MainViewModel(ConfigStore configStore, EastMoneyClient eastMoneyClient)
     {
         _configStore = configStore;
+        _eastMoneyClient = eastMoneyClient;
         _config = _configStore.Load();
         _config.EnsureGroupsMigrated();
+        _eastMoneyClient.PreferredQuoteSource = _config.QuoteDataSource;
         _funds = _configStore.MigrateFundsFromConfig(_config);
         RebuildGroupsCollection();
 
@@ -660,6 +702,9 @@ public class MainViewModel : INotifyPropertyChanged
         OnPropertyChanged(nameof(HoldingTodayProfitText));
         OnPropertyChanged(nameof(HoldingTodayProfitDetails));
         OnPropertyChanged(nameof(StatusSourceText));
+        OnPropertyChanged(nameof(CanCycleQuoteDataSource));
+        OnPropertyChanged(nameof(CanReorder));
+        OnPropertyChanged(nameof(HoldingAmountSortArrow));
         _configStore.Save(_config);
         _ = _quoteService.RefreshNowAsync();
     }
@@ -679,7 +724,8 @@ public class MainViewModel : INotifyPropertyChanged
         OnPropertyChanged(nameof(HoldingProfitTotalText));
         OnPropertyChanged(nameof(HoldingTodayProfitText));
         OnPropertyChanged(nameof(HoldingTodayProfitDetails));
-        if (SelectedGroupId == HoldingGroupId || SortColumn != "default")
+        // 持仓/基金默认按金额排序，行情变化后需重排
+        if (SelectedGroupId == HoldingGroupId || IsFundGroup || SortColumn != "default")
             RefreshVisibleStocks();
     }
 
@@ -910,6 +956,14 @@ public class MainViewModel : INotifyPropertyChanged
     {
         if (string.IsNullOrWhiteSpace(column)) return;
 
+        // 基金默认已是持有金额降序，再点该列切到升序
+        if (IsFundGroup && SortColumn == "default" && column == "holdingAmount")
+        {
+            SortColumn = "holdingAmount";
+            SortDescending = false;
+            return;
+        }
+
         if (SortColumn == column)
         {
             if (SortDescending)
@@ -1021,6 +1075,8 @@ public class MainViewModel : INotifyPropertyChanged
 
         Groups.Remove(group);
         _config.Groups.RemoveAll(g => g.Id == groupId);
+        // 同步移除该分组的独立列宽
+        _config.ColumnWidthsByGroup.Remove(groupId);
 
         if (SelectedGroupId == groupId)
             SelectedGroupId = fallback.Id;
@@ -1514,7 +1570,12 @@ public class MainViewModel : INotifyPropertyChanged
         };
 
         if (SortColumn == "default")
+        {
+            // 基金列表默认按持有金额从高到低
+            if (IsFundGroup)
+                return stocks.OrderByDescending(s => s.HoldingAmount).ThenBy(s => s.DisplayName);
             return stocks;
+        }
 
         return SortDescending
             ? stocks.OrderByDescending(selector).ThenBy(s => s.DisplayName)
