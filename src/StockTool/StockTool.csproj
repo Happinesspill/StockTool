@@ -26,4 +26,101 @@
     <Using Remove="System.Windows.Forms" />
   </ItemGroup>
 
+  <!-- Release：进程内 Kill/Start，避免每次冷启动 powershell；可用 /p:RestartRelease=false 关闭 -->
+  <PropertyGroup>
+    <RestartRelease Condition="'$(RestartRelease)' == ''">true</RestartRelease>
+    <_RestartReleaseExe>$([System.IO.Path]::GetFullPath('$(MSBuildThisFileDirectory)..\..\bin\Release\StockTool.exe'))</_RestartReleaseExe>
+  </PropertyGroup>
+
+  <UsingTask TaskName="StopReleaseStockTool" TaskFactory="RoslynCodeTaskFactory" AssemblyFile="$(MSBuildToolsPath)\Microsoft.Build.Tasks.Core.dll">
+    <ParameterGroup>
+      <ExePath ParameterType="System.String" Required="true" />
+    </ParameterGroup>
+    <Task>
+      <Using Namespace="System.Diagnostics" />
+      <Using Namespace="System.IO" />
+      <Code Type="Fragment" Language="cs"><![CDATA[
+var full = Path.GetFullPath(ExePath);
+var name = Path.GetFileNameWithoutExtension(full);
+var stopped = false;
+foreach (var process in Process.GetProcessesByName(name))
+{
+    try
+    {
+        string path;
+        try { path = process.MainModule?.FileName ?? string.Empty; }
+        catch { continue; }
+        if (string.IsNullOrEmpty(path)) continue;
+        if (!string.Equals(Path.GetFullPath(path), full, StringComparison.OrdinalIgnoreCase)) continue;
+
+        Log.LogMessage(MessageImportance.High, "[Restart-Release] Stopping PID {0}: {1}", process.Id, path);
+        process.Kill();
+        if (!process.WaitForExit(10000))
+            Log.LogWarning("[Restart-Release] Timed out waiting for process exit; build may fail if the exe is still locked.");
+        stopped = true;
+    }
+    catch (Exception ex)
+    {
+        Log.LogMessage(MessageImportance.Low, "[Restart-Release] {0}", ex.Message);
+    }
+    finally
+    {
+        process.Dispose();
+    }
+}
+
+if (!stopped)
+{
+    Log.LogMessage(MessageImportance.Normal, "[Restart-Release] No running Release instance.");
+}
+else
+{
+    System.Threading.Thread.Sleep(200);
+    Log.LogMessage(MessageImportance.High, "[Restart-Release] Release instance stopped.");
+}
+]]></Code>
+    </Task>
+  </UsingTask>
+
+  <UsingTask TaskName="StartReleaseStockTool" TaskFactory="RoslynCodeTaskFactory" AssemblyFile="$(MSBuildToolsPath)\Microsoft.Build.Tasks.Core.dll">
+    <ParameterGroup>
+      <ExePath ParameterType="System.String" Required="true" />
+    </ParameterGroup>
+    <Task>
+      <Using Namespace="System.Diagnostics" />
+      <Using Namespace="System.IO" />
+      <Code Type="Fragment" Language="cs"><![CDATA[
+var full = Path.GetFullPath(ExePath);
+if (!File.Exists(full))
+{
+    Log.LogError("[Restart-Release] Exe not found: {0}", full);
+    return false;
+}
+
+Log.LogMessage(MessageImportance.High, "[Restart-Release] Starting {0}", full);
+Process.Start(new ProcessStartInfo(full)
+{
+    WorkingDirectory = Path.GetDirectoryName(full) ?? string.Empty,
+    UseShellExecute = true
+});
+]]></Code>
+    </Task>
+  </UsingTask>
+
+  <!-- 用 Inputs/Outputs 自跳过：无代码变更时不 Kill、不重启（Before/AfterTargets 本身不会因 CoreCompile 跳过而跳过） -->
+  <Target Name="StopRunningRelease" BeforeTargets="CoreCompile"
+          Condition="'$(Configuration)' == 'Release' And '$(RestartRelease)' == 'true'"
+          Inputs="$(MSBuildProjectFullPath);@(Compile);@(Page);@(ApplicationDefinition);@(EmbeddedResource)"
+          Outputs="$(IntermediateOutputPath)$(TargetName).dll">
+    <StopReleaseStockTool ExePath="$(_RestartReleaseExe)" ContinueOnError="true" />
+  </Target>
+
+  <Target Name="StartReleaseAfterBuild" AfterTargets="Build"
+          Condition="'$(Configuration)' == 'Release' And '$(RestartRelease)' == 'true'"
+          Inputs="$(_RestartReleaseExe)"
+          Outputs="$(IntermediateOutputPath)restart-release.stamp">
+    <StartReleaseStockTool ExePath="$(_RestartReleaseExe)" />
+    <Touch Files="$(IntermediateOutputPath)restart-release.stamp" AlwaysCreate="true" ForceTouch="true" />
+  </Target>
+
 </Project>

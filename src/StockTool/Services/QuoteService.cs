@@ -160,11 +160,16 @@ public class QuoteService
         {
             foreach (var stock in _stocks)
             {
-                // 港股持仓/盈亏用当日港币兑人民币中间价折算；股价仍为港币
-                if (stock.IsHk && hkdCnyRate is > 0)
-                    stock.FxToCny = hkdCnyRate.Value;
-                else if (!stock.IsHk)
+                // 港股持仓/盈亏按港股通参考汇率折人民币；股价仍为港币
+                if (stock.IsHk)
+                {
+                    if (hkdCnyRate is > 0)
+                        stock.FxToCny = hkdCnyRate.Value;
+                }
+                else
+                {
                     stock.FxToCny = 1m;
+                }
 
                 if (stock.IsFund)
                 {

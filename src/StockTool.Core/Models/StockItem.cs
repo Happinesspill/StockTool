@@ -85,6 +85,7 @@ public class StockItem : INotifyPropertyChanged
             OnPropertyChanged(nameof(IsFund));
             OnPropertyChanged(nameof(IsHk));
             OnPropertyChanged(nameof(PriceText));
+            OnPropertyChanged(nameof(TaskbarPriceText));
             OnPropertyChanged(nameof(IntradaySlotCount));
         }
     }
@@ -101,6 +102,7 @@ public class StockItem : INotifyPropertyChanged
             OnPropertyChanged(nameof(IsFund));
             OnPropertyChanged(nameof(IsHk));
             OnPropertyChanged(nameof(PriceText));
+            OnPropertyChanged(nameof(TaskbarPriceText));
             OnPropertyChanged(nameof(IntradaySlotCount));
         }
     }
@@ -201,6 +203,7 @@ public class StockItem : INotifyPropertyChanged
             _currentPrice = value;
             OnPropertyChanged();
             OnPropertyChanged(nameof(PriceText));
+            OnPropertyChanged(nameof(TaskbarPriceText));
             OnPropertyChanged(nameof(HoldingProfit));
             OnPropertyChanged(nameof(HoldingProfitPercent));
             OnPropertyChanged(nameof(TodayHoldingProfit));
@@ -232,6 +235,11 @@ public class StockItem : INotifyPropertyChanged
         : IsHk
             ? $"HK${_currentPrice:F2}"
             : $"{_currentPrice:F2}";
+
+    /// <summary>任务栏用：港股不带 HK$ 前缀，与系统托盘风格一致。</summary>
+    public string TaskbarPriceText => IsFund
+        ? $"{_currentPrice:F4}"
+        : $"{_currentPrice:F2}";
 
     // 基金是否拿到盘中估算净值
     public bool HasFundValuation

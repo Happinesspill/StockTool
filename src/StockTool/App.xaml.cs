@@ -16,14 +16,18 @@ namespace StockTool;
 
 public partial class App : System.Windows.Application
 {
+    private const string MutexName = "Local\\StockTool.SingleInstance";
     private const string ExitEventName = "Local\\StockTool.Exit";
+    private const string ShowEventName = "Local\\StockTool.Show";
     private const string QuitArg = "--quit";
 
     private WinForms.NotifyIcon? _trayIcon;
     private EastMoneyClient? _eastMoneyClient;
     private HotkeyService? _hotkeyService;
     private MainWindow? _mainWindow;
+    private Mutex? _singleInstanceMutex;
     private EventWaitHandle? _exitEvent;
+    private EventWaitHandle? _showEvent;
     private CancellationTokenSource? _exitWatchCts;
 
     [DllImport("user32.dll", SetLastError = true)]
@@ -40,9 +44,20 @@ public partial class App : System.Windows.Application
             return;
         }
 
+        _singleInstanceMutex = new Mutex(initiallyOwned: true, MutexName, out bool createdNew);
+        if (!createdNew)
+        {
+            _singleInstanceMutex.Dispose();
+            _singleInstanceMutex = null;
+            RequestRunningInstanceShow();
+            Shutdown();
+            return;
+        }
+
         _exitEvent = new EventWaitHandle(false, EventResetMode.AutoReset, ExitEventName);
+        _showEvent = new EventWaitHandle(false, EventResetMode.AutoReset, ShowEventName);
         _exitWatchCts = new CancellationTokenSource();
-        _ = WatchExitSignalAsync(_exitWatchCts.Token);
+        _ = WatchIpcSignalsAsync(_exitWatchCts.Token);
 
         var configStore = new ConfigStore();
         _eastMoneyClient = new EastMoneyClient();
@@ -195,28 +210,49 @@ public partial class App : System.Windows.Application
         }
     }
 
-    private async Task WatchExitSignalAsync(CancellationToken token)
+    private static void RequestRunningInstanceShow()
+    {
+        try
+        {
+            using var showEvent = EventWaitHandle.OpenExisting(ShowEventName);
+            showEvent.Set();
+        }
+        catch
+        {
+            // 运行中实例刚退出时忽略
+        }
+    }
+
+    private async Task WatchIpcSignalsAsync(CancellationToken token)
     {
         await Task.Yield();
         while (!token.IsCancellationRequested)
         {
-            bool signaled = await Task.Run(() =>
+            int signaled = await Task.Run(() =>
             {
                 try
                 {
-                    return _exitEvent != null && _exitEvent.WaitOne(500);
+                    if (_exitEvent == null || _showEvent == null)
+                        return WaitHandle.WaitTimeout;
+                    return WaitHandle.WaitAny([_exitEvent, _showEvent], 500);
                 }
                 catch
                 {
-                    return false;
+                    return WaitHandle.WaitTimeout;
                 }
             }, token).ConfigureAwait(false);
 
             if (token.IsCancellationRequested) break;
-            if (!signaled) continue;
+            if (signaled == WaitHandle.WaitTimeout) continue;
 
-            await Dispatcher.InvokeAsync(ShutdownApp);
-            break;
+            if (signaled == 0)
+            {
+                await Dispatcher.InvokeAsync(ShutdownApp);
+                break;
+            }
+
+            if (signaled == 1)
+                await Dispatcher.InvokeAsync(ShowMainWindow);
         }
     }
 
@@ -239,22 +275,30 @@ public partial class App : System.Windows.Application
 
     private void ShowMainWindow()
     {
-        if (_mainWindow != null)
-        {
-            _mainWindow.Show();
-            _mainWindow.WindowState = WindowState.Normal;
-            _mainWindow.Activate();
-        }
+        if (_mainWindow == null) return;
+
+        _mainWindow.Show();
+        _mainWindow.WindowState = WindowState.Normal;
+
+        bool wasTopmost = _mainWindow.Topmost;
+        _mainWindow.Topmost = true;
+        _mainWindow.Activate();
+        _mainWindow.Topmost = wasTopmost;
+        _mainWindow.Focus();
     }
 
     private void ShutdownApp()
     {
         _exitWatchCts?.Cancel();
         _hotkeyService?.Dispose();
+        if (_mainWindow?.DataContext is ViewModels.MainViewModel vm)
+            vm.DisposeTaskbarOverlay();
         _eastMoneyClient?.Dispose();
         _trayIcon?.Dispose();
         _mainWindow?.CloseForExit();
         _exitEvent?.Dispose();
+        _showEvent?.Dispose();
+        _singleInstanceMutex?.Dispose();
         Shutdown();
     }
 
@@ -262,9 +306,13 @@ public partial class App : System.Windows.Application
     {
         _exitWatchCts?.Cancel();
         _hotkeyService?.Dispose();
+        if (_mainWindow?.DataContext is ViewModels.MainViewModel vm)
+            vm.DisposeTaskbarOverlay();
         _eastMoneyClient?.Dispose();
         _trayIcon?.Dispose();
         _exitEvent?.Dispose();
+        _showEvent?.Dispose();
+        _singleInstanceMutex?.Dispose();
         base.OnExit(e);
     }
 }

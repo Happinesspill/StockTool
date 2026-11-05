@@ -14,6 +14,7 @@ public partial class ManageGroupsWindow : Window
     private Point _dragStart;
     private WatchlistGroup? _draggedGroup;
     private IndexItem? _draggedIndex;
+    private TaskbarStockViewItem? _draggedTaskbar;
     private bool _committed;
 
     public ManageGroupsWindow(MainViewModel vm)
@@ -27,6 +28,8 @@ public partial class ManageGroupsWindow : Window
             Filter = o => o is WatchlistGroup g && !MainViewModel.IsFixedGroup(g)
         };
         _vm.BeginManageGroupsEdit();
+        _vm.TaskbarStocks.CollectionChanged += (_, _) => UpdateTaskbarEmptyHint();
+        UpdateTaskbarEmptyHint();
         Closing += (_, _) =>
         {
             if (!_committed)
@@ -34,13 +37,20 @@ public partial class ManageGroupsWindow : Window
         };
     }
 
+    private void UpdateTaskbarEmptyHint()
+    {
+        TxtTaskbarEmpty.Visibility = _vm.TaskbarStocks.Count == 0
+            ? Visibility.Visible
+            : Visibility.Collapsed;
+    }
+
     private void Window_MouseLeftButtonDown(object sender, MouseButtonEventArgs e)
     {
         if (e.ChangedButton != MouseButton.Left) return;
-        // 分组/指数卡片内拖拽排序时不移动窗口
+        // 分组/指数/任务栏卡片内拖拽排序时不移动窗口
         var source = e.OriginalSource as DependencyObject;
         if (FindAncestor<ListBox>(source) is ListBox list &&
-            (list == GroupList || list == IndexCardList))
+            (list == GroupList || list == IndexCardList || list == TaskbarList))
             return;
         DragMove();
     }
@@ -60,6 +70,139 @@ public partial class ManageGroupsWindow : Window
         if (name == null) return;
         if (_vm.AddGroup(name) == null)
             MessageBox.Show(this, "创建失败（名称无效或已存在）", "提示", MessageBoxButton.OK, MessageBoxImage.Information);
+    }
+
+    private void BtnAddTaskbarStock_Click(object sender, RoutedEventArgs e)
+    {
+        var candidates = _vm.Stocks
+            .GroupBy(s => s.Code, StringComparer.OrdinalIgnoreCase)
+            .Select(g => g.First())
+            .OrderBy(s => s.DisplayName)
+            .ToList();
+
+        if (candidates.Count == 0)
+        {
+            MessageBox.Show(this, "请先在自选中添加股票", "提示", MessageBoxButton.OK, MessageBoxImage.Information);
+            return;
+        }
+
+        var picked = PromptPickStock(candidates);
+        if (picked == null) return;
+
+        string? err = _vm.AddTaskbarStock(picked.Code, picked.Name, picked.Market, picked.Screen);
+        if (err != null)
+            MessageBox.Show(this, err, "提示", MessageBoxButton.OK, MessageBoxImage.Information);
+        UpdateTaskbarEmptyHint();
+    }
+
+    private void BtnRemoveTaskbar_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is not FrameworkElement fe || fe.Tag is not TaskbarStockViewItem item) return;
+        _vm.RemoveTaskbarStock(item.Stock.Code);
+        UpdateTaskbarEmptyHint();
+        e.Handled = true;
+    }
+
+    private void BtnTaskbarMoveUp_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is not FrameworkElement fe || fe.Tag is not TaskbarStockViewItem item) return;
+        int index = _vm.TaskbarStocks.IndexOf(item);
+        _vm.MoveTaskbarStock(index, -1);
+        e.Handled = true;
+    }
+
+    private void BtnTaskbarMoveDown_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is not FrameworkElement fe || fe.Tag is not TaskbarStockViewItem item) return;
+        int index = _vm.TaskbarStocks.IndexOf(item);
+        _vm.MoveTaskbarStock(index, 1);
+        e.Handled = true;
+    }
+
+    private void TaskbarScreen_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (sender is not ComboBox cb || cb.Tag is not TaskbarStockViewItem item) return;
+        if (cb.SelectedItem is not int screen) return;
+        _vm.SetTaskbarStockScreen(item, screen);
+    }
+
+    private void TaskbarList_PreviewMouseLeftButtonDown(object sender, MouseButtonEventArgs e)
+    {
+        if (FindAncestor<Button>(e.OriginalSource as DependencyObject) != null ||
+            FindAncestor<ComboBox>(e.OriginalSource as DependencyObject) != null)
+        {
+            _draggedTaskbar = null;
+            return;
+        }
+
+        _dragStart = e.GetPosition(null);
+        _draggedTaskbar = FindTaskbarAtMouse(e);
+    }
+
+    private void TaskbarList_PreviewMouseMove(object sender, MouseEventArgs e)
+    {
+        if (_draggedTaskbar == null || e.LeftButton != MouseButtonState.Pressed) return;
+
+        var pos = e.GetPosition(null);
+        if (Math.Abs(pos.X - _dragStart.X) > SystemParameters.MinimumHorizontalDragDistance ||
+            Math.Abs(pos.Y - _dragStart.Y) > SystemParameters.MinimumVerticalDragDistance)
+        {
+            var item = _draggedTaskbar;
+            _draggedTaskbar = null;
+            DragDrop.DoDragDrop(TaskbarList, item, DragDropEffects.Move);
+        }
+    }
+
+    private void TaskbarList_DragOver(object sender, DragEventArgs e)
+    {
+        if (!e.Data.GetDataPresent(typeof(TaskbarStockViewItem)))
+        {
+            e.Effects = DragDropEffects.None;
+            e.Handled = true;
+            return;
+        }
+        e.Effects = DragDropEffects.Move;
+        e.Handled = true;
+    }
+
+    private void TaskbarList_Drop(object sender, DragEventArgs e)
+    {
+        if (!e.Data.GetDataPresent(typeof(TaskbarStockViewItem))) return;
+        var dragged = e.Data.GetData(typeof(TaskbarStockViewItem)) as TaskbarStockViewItem;
+        if (dragged == null) return;
+
+        var target = FindTaskbarAtMouse(e);
+        if (target == null || target == dragged) return;
+
+        int oldIndex = _vm.TaskbarStocks.IndexOf(dragged);
+        int newIndex = _vm.TaskbarStocks.IndexOf(target);
+        _vm.ReorderTaskbarStock(oldIndex, newIndex);
+    }
+
+    private void TaskbarList_GiveFeedback(object sender, GiveFeedbackEventArgs e)
+    {
+        e.UseDefaultCursors = false;
+        e.Handled = true;
+    }
+
+    private TaskbarStockViewItem? FindTaskbarAtMouse(RoutedEventArgs e)
+    {
+        Point pos;
+        if (e is MouseEventArgs me)
+            pos = me.GetPosition(TaskbarList);
+        else if (e is DragEventArgs de)
+            pos = de.GetPosition(TaskbarList);
+        else
+            return null;
+
+        var element = TaskbarList.InputHitTest(pos) as DependencyObject;
+        while (element != null)
+        {
+            if (element is FrameworkElement fe && fe.DataContext is TaskbarStockViewItem item)
+                return item;
+            element = VisualTreeHelper.GetParent(element);
+        }
+        return null;
     }
 
     private void IndexCardList_PreviewMouseLeftButtonDown(object sender, MouseButtonEventArgs e)
@@ -307,6 +450,154 @@ public partial class ManageGroupsWindow : Window
 
         if (!_vm.DeleteGroup(group.Id))
             MessageBox.Show(this, "删除失败", "提示", MessageBoxButton.OK, MessageBoxImage.Information);
+    }
+
+    private sealed class PickResult
+    {
+        public string Code { get; init; } = string.Empty;
+        public string Name { get; init; } = string.Empty;
+        public string Market { get; init; } = string.Empty;
+        public int Screen { get; init; } = 1;
+    }
+
+    private PickResult? PromptPickStock(IReadOnlyList<StockItem> candidates)
+    {
+        var dialog = new Window
+        {
+            Title = "添加任务栏股票",
+            Width = 360,
+            Height = 420,
+            WindowStyle = WindowStyle.None,
+            AllowsTransparency = true,
+            Background = Brushes.Transparent,
+            ResizeMode = ResizeMode.NoResize,
+            Owner = this,
+            WindowStartupLocation = WindowStartupLocation.CenterOwner
+        };
+
+        PickResult? result = null;
+        var list = new ListBox
+        {
+            Margin = new Thickness(16, 8, 16, 8),
+            Height = 240,
+            BorderBrush = new SolidColorBrush(Color.FromRgb(0xD0, 0xD0, 0xD0)),
+            BorderThickness = new Thickness(1),
+            DisplayMemberPath = "DisplayName"
+        };
+        // 展示「名称 (代码)」
+        list.ItemsSource = candidates.Select(s => new
+        {
+            Stock = s,
+            DisplayName = $"{s.DisplayName}  ({s.CodeNumeric})"
+        }).ToList();
+        list.DisplayMemberPath = "DisplayName";
+
+        var screenBox = new ComboBox
+        {
+            Width = 100,
+            Height = 28,
+            Margin = new Thickness(8, 0, 0, 0),
+            ItemsSource = _vm.AvailableScreens.ToList(),
+            ItemStringFormat = "屏幕{0}",
+            SelectedIndex = 0
+        };
+
+        var ok = new Button { Content = "添加", Width = 72, Height = 30, Margin = new Thickness(0, 0, 8, 0) };
+        var cancel = new Button { Content = "取消", Width = 72, Height = 30 };
+        ok.Click += (_, _) =>
+        {
+            if (list.SelectedItem == null)
+            {
+                MessageBox.Show(dialog, "请选择一只股票", "提示", MessageBoxButton.OK, MessageBoxImage.Information);
+                return;
+            }
+
+            dynamic sel = list.SelectedItem;
+            StockItem stock = sel.Stock;
+            int screen = screenBox.SelectedItem is int s ? s : 1;
+            result = new PickResult
+            {
+                Code = stock.Code,
+                Name = stock.Name,
+                Market = stock.Market,
+                Screen = screen
+            };
+            dialog.DialogResult = true;
+        };
+        cancel.Click += (_, _) => dialog.DialogResult = false;
+        list.MouseDoubleClick += (_, _) =>
+        {
+            if (list.SelectedItem == null) return;
+            dynamic sel = list.SelectedItem;
+            StockItem stock = sel.Stock;
+            int screen = screenBox.SelectedItem is int s ? s : 1;
+            result = new PickResult
+            {
+                Code = stock.Code,
+                Name = stock.Name,
+                Market = stock.Market,
+                Screen = screen
+            };
+            dialog.DialogResult = true;
+        };
+
+        var buttons = new StackPanel
+        {
+            Orientation = Orientation.Horizontal,
+            HorizontalAlignment = HorizontalAlignment.Right,
+            Margin = new Thickness(16, 0, 16, 16)
+        };
+        buttons.Children.Add(ok);
+        buttons.Children.Add(cancel);
+
+        var screenRow = new StackPanel
+        {
+            Orientation = Orientation.Horizontal,
+            Margin = new Thickness(16, 0, 16, 10),
+            VerticalAlignment = VerticalAlignment.Center
+        };
+        screenRow.Children.Add(new TextBlock
+        {
+            Text = "添加到",
+            VerticalAlignment = VerticalAlignment.Center,
+            Foreground = new SolidColorBrush(Color.FromRgb(0x55, 0x55, 0x55)),
+            FontSize = 13
+        });
+        screenRow.Children.Add(screenBox);
+
+        var root = new Border
+        {
+            Background = new SolidColorBrush(Color.FromArgb(0xF5, 0xFF, 0xFF, 0xFF)),
+            BorderBrush = new SolidColorBrush(Color.FromRgb(0xCC, 0xCC, 0xCC)),
+            BorderThickness = new Thickness(1),
+            CornerRadius = new CornerRadius(10),
+            Child = new StackPanel
+            {
+                Children =
+                {
+                    new TextBlock
+                    {
+                        Text = "添加任务栏股票",
+                        FontSize = 14,
+                        FontWeight = FontWeights.SemiBold,
+                        Margin = new Thickness(16, 14, 16, 4),
+                        Foreground = new SolidColorBrush(Color.FromRgb(0x1A, 0x1A, 0x1A))
+                    },
+                    new TextBlock
+                    {
+                        Text = "从自选中选择，并指定显示器",
+                        FontSize = 11,
+                        Foreground = new SolidColorBrush(Color.FromRgb(0x88, 0x88, 0x88)),
+                        Margin = new Thickness(16, 0, 16, 4)
+                    },
+                    list,
+                    screenRow,
+                    buttons
+                }
+            }
+        };
+        dialog.Content = root;
+        return dialog.ShowDialog() == true ? result : null;
     }
 
     private string? PromptText(string title, string initial)

@@ -17,11 +17,12 @@ public static class IndexCatalog
         new() { Name = "创业板指", DisplayCode = "399006", Code = "SZ399006" },
         new() { Name = "科创50", DisplayCode = "000688", Code = "SH000688" },
         new() { Name = "深证成指", DisplayCode = "399001", Code = "SZ399001" },
-        new() { Name = "北证50", DisplayCode = "899050", Code = "SZ899050" },
+        // 北交所指数：腾讯/新浪为 bj899050，东财 secid 仍为 0.899050
+        new() { Name = "北证50", DisplayCode = "899050", Code = "BJ899050" },
         new() { Name = "沪深300", DisplayCode = "000300", Code = "SH000300" },
         new() { Name = "上证50", DisplayCode = "000016", Code = "SH000016" },
         new() { Name = "恒生指数", DisplayCode = "HSI", Code = "IX100.HSI" },
-        // 东财页面为 100.NDX（纳斯达克）；综合指数亦见 100.IXIC，优先 NDX
+        // 东财 100.NDX；腾讯 usNDX
         new() { Name = "纳斯达克", DisplayCode = "NDX", Code = "IX100.NDX" },
         new() { Name = "标普500", DisplayCode = "SPX", Code = "IX100.SPX" },
         new() { Name = "道琼斯", DisplayCode = "DJI", Code = "IX100.DJIA" },

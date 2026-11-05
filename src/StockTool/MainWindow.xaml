@@ -475,8 +475,8 @@
                                     <Setter.Value>
                                         <ControlTemplate TargetType="ListBoxItem">
                                             <Border x:Name="Bd"
-                                                    Background="#F5F5F5"
-                                                    BorderBrush="#E0E0E0"
+                                                    Background="Transparent"
+                                                    BorderBrush="Transparent"
                                                     BorderThickness="1"
                                                     CornerRadius="14"
                                                     Padding="12,0"
@@ -490,13 +490,21 @@
                                             </Border>
                                             <ControlTemplate.Triggers>
                                                 <Trigger Property="IsMouseOver" Value="True">
-                                                    <Setter TargetName="Bd" Property="Background" Value="#EBEBEB" />
+                                                    <Setter TargetName="Bd" Property="Background" Value="#18000000" />
                                                 </Trigger>
                                                 <Trigger Property="IsSelected" Value="True">
-                                                    <Setter TargetName="Bd" Property="Background" Value="#4A4A4A" />
-                                                    <Setter TargetName="Bd" Property="BorderBrush" Value="#4A4A4A" />
+                                                    <Setter TargetName="Bd" Property="Background" Value="#B34A4A4A" />
+                                                    <Setter TargetName="Bd" Property="BorderBrush" Value="#B34A4A4A" />
                                                     <Setter TargetName="TabText" Property="Foreground" Value="White" />
                                                 </Trigger>
+                                                <MultiTrigger>
+                                                    <MultiTrigger.Conditions>
+                                                        <Condition Property="IsSelected" Value="True" />
+                                                        <Condition Property="IsMouseOver" Value="True" />
+                                                    </MultiTrigger.Conditions>
+                                                    <Setter TargetName="Bd" Property="Background" Value="#CC4A4A4A" />
+                                                    <Setter TargetName="Bd" Property="BorderBrush" Value="#CC4A4A4A" />
+                                                </MultiTrigger>
                                             </ControlTemplate.Triggers>
                                         </ControlTemplate>
                                     </Setter.Value>

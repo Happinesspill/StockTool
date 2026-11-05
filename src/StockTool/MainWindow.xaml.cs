@@ -4,8 +4,11 @@ using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Controls.Primitives;
 using System.Windows.Input;
+using System.Windows.Data;
 using System.Windows.Media;
+using System.Windows.Media.Effects;
 using System.Windows.Media.Imaging;
+using System.Windows.Shapes;
 using StockTool.Core.Models;
 using StockTool.Data;
 using StockTool.ViewModels;
@@ -52,7 +55,7 @@ public partial class MainWindow : Window
 
     private void ApplyAppIcon()
     {
-        var iconPath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "Assets", "app.ico");
+        var iconPath = System.IO.Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "Assets", "app.ico");
         if (!File.Exists(iconPath)) return;
         Icon = BitmapFrame.Create(new Uri(iconPath), BitmapCreateOptions.None, BitmapCacheOption.OnLoad);
     }
@@ -72,16 +75,15 @@ public partial class MainWindow : Window
     {
         if (_addStockDialog != null)
         {
-            if (_addStockDialog.WindowState == WindowState.Minimized)
-                _addStockDialog.WindowState = WindowState.Normal;
-            _addStockDialog.Activate();
+            BringSecondaryToFront(_addStockDialog);
             return;
         }
 
         var dialog = new AddStockDialog(_client, VM.IsFundGroup, VM.GetHoldingVisionOptions, OpenSettings)
         {
-            // 不设 Owner / Topmost：主窗可点，二级不强制置顶；置顶仅主窗绑定
-            WindowStartupLocation = WindowStartupLocation.CenterScreen,
+            // Owner 保证压在主窗之上（主窗 Topmost 时也生效）；自身不设 Topmost
+            Owner = this,
+            WindowStartupLocation = WindowStartupLocation.CenterOwner,
             ShowInTaskbar = false,
             Topmost = false
         };
@@ -108,6 +110,18 @@ public partial class MainWindow : Window
         };
         _addStockDialog = dialog;
         dialog.Show();
+        BringSecondaryToFront(dialog);
+    }
+
+    /// <summary>把二级窗提到主窗前面（主窗置顶时无 Owner 会被压在下面）。</summary>
+    private static void BringSecondaryToFront(Window window)
+    {
+        if (window.WindowState == WindowState.Minimized)
+            window.WindowState = WindowState.Normal;
+        window.Activate();
+        window.Topmost = true;
+        window.Topmost = false;
+        window.Focus();
     }
 
     private void BtnSettings_Click(object sender, RoutedEventArgs e)
@@ -125,9 +139,7 @@ public partial class MainWindow : Window
     {
         if (_settingsWindow != null)
         {
-            if (_settingsWindow.WindowState == WindowState.Minimized)
-                _settingsWindow.WindowState = WindowState.Normal;
-            _settingsWindow.Activate();
+            BringSecondaryToFront(_settingsWindow);
             return;
         }
 
@@ -143,7 +155,8 @@ public partial class MainWindow : Window
             VM.MimoApiKey,
             VM)
         {
-            WindowStartupLocation = WindowStartupLocation.CenterScreen,
+            Owner = this,
+            WindowStartupLocation = WindowStartupLocation.CenterOwner,
             ShowInTaskbar = false,
             Topmost = false
         };
@@ -169,6 +182,7 @@ public partial class MainWindow : Window
 
         _settingsWindow = dialog;
         dialog.Show();
+        BringSecondaryToFront(dialog);
     }
 
     public void ToggleVisibility()
@@ -298,21 +312,21 @@ public partial class MainWindow : Window
     {
         if (_manageGroupsWindow != null)
         {
-            if (_manageGroupsWindow.WindowState == WindowState.Minimized)
-                _manageGroupsWindow.WindowState = WindowState.Normal;
-            _manageGroupsWindow.Activate();
+            BringSecondaryToFront(_manageGroupsWindow);
             return;
         }
 
         var dlg = new ManageGroupsWindow(VM)
         {
-            WindowStartupLocation = WindowStartupLocation.CenterScreen,
+            Owner = this,
+            WindowStartupLocation = WindowStartupLocation.CenterOwner,
             ShowInTaskbar = false,
             Topmost = false
         };
         dlg.Closed += (_, _) => _manageGroupsWindow = null;
         _manageGroupsWindow = dlg;
         dlg.Show();
+        BringSecondaryToFront(dlg);
     }
 
     private string? PromptSimpleText(string title, string placeholder)
@@ -533,7 +547,10 @@ public partial class MainWindow : Window
 
         foreach (var obj in menu.Items)
         {
-            if (obj is MenuItem mi && mi.Header as string == "设置定投")
+            if (obj is not MenuItem mi) continue;
+            if (mi.Header as string is "删除股票" or "清仓")
+                mi.Header = VM.IsHoldingGroupSelected ? "清仓" : "删除股票";
+            if (mi.Header as string == "设置定投")
                 mi.Visibility = stock.IsFund ? Visibility.Visible : Visibility.Collapsed;
         }
     }
@@ -586,6 +603,20 @@ public partial class MainWindow : Window
 
     private void ConfirmAndRemoveStock(StockItem item)
     {
+        // 持仓分组：只清仓，不从自选列表删除
+        if (VM.IsHoldingGroupSelected)
+        {
+            var clear = MessageBox.Show(
+                this,
+                $"确定要清除「{item.DisplayName}」的持仓吗？不会从自选列表中删除。",
+                "确认清仓",
+                MessageBoxButton.OKCancel,
+                MessageBoxImage.Warning);
+            if (clear == MessageBoxResult.OK)
+                VM.SetHolding(item, 0, 0);
+            return;
+        }
+
         var result = MessageBox.Show(
             this,
             $"确定要从自选列表中删除「{item.DisplayName}」吗？",
@@ -918,9 +949,9 @@ public partial class MainWindow : Window
         var isFund = stock.IsFund;
         var dialog = new Window
         {
-            Title = "设置持仓",
-            Width = 340,
-            Height = 236,
+            Title = "持仓设置",
+            Width = 400,
+            SizeToContent = SizeToContent.Height,
             WindowStyle = WindowStyle.None,
             AllowsTransparency = true,
             Background = Brushes.Transparent,
@@ -930,83 +961,125 @@ public partial class MainWindow : Window
             ShowInTaskbar = false
         };
 
-        var sharesBox = CreateDialogTextBox(stock.HoldingShares > 0 ? stock.HoldingShares.ToString("0.####", CultureInfo.InvariantCulture) : "");
-        var costBox = CreateDialogTextBox(stock.HoldingCost > 0 ? stock.HoldingCost.ToString("0.####", CultureInfo.InvariantCulture) : "");
+        var costBox = CreateHoldingTextBox(stock.HoldingCost > 0
+            ? stock.HoldingCost.ToString("0.####", CultureInfo.InvariantCulture)
+            : "");
+        var sharesBox = CreateHoldingTextBox(stock.HoldingShares > 0
+            ? stock.HoldingShares.ToString("0.####", CultureInfo.InvariantCulture)
+            : "");
         var errorText = new TextBlock
         {
             Foreground = new SolidColorBrush(Color.FromRgb(0xE1, 0x1D, 0x48)),
             FontSize = 12,
-            Margin = new Thickness(0, 2, 0, 8),
-            Visibility = Visibility.Collapsed
+            Margin = new Thickness(0, 4, 0, 0),
+            Visibility = Visibility.Collapsed,
+            TextWrapping = TextWrapping.Wrap
         };
 
-        var cancelBtn = CreateRoundedButton("取消", false);
-        cancelBtn.Width = 75;
-        cancelBtn.Height = 32;
+        var cancelBtn = CreateHoldingActionButton("取消", isPrimary: false);
+        cancelBtn.Margin = new Thickness(0, 0, 10, 0);
 
-        var okBtn = CreateRoundedButton("确定", true);
-        okBtn.Width = 75;
-        okBtn.Height = 32;
-        okBtn.Margin = new Thickness(0, 0, 8, 0);
+        var clearBtn = CreateHoldingActionButton("清仓", isPrimary: false);
+        clearBtn.Margin = new Thickness(0, 0, 10, 0);
+        clearBtn.Foreground = new SolidColorBrush(Color.FromRgb(0xE1, 0x1D, 0x48));
+
+        var saveBtn = CreateHoldingActionButton("保存", isPrimary: true, withSaveIcon: true);
 
         (decimal Shares, decimal Cost)? result = null;
-        okBtn.Click += (_, _) =>
+        saveBtn.Click += (_, _) =>
         {
             if (!TryParseHolding(sharesBox.Text, out var shares) || !TryParseHolding(costBox.Text, out var cost))
             {
-                errorText.Text = isFund ? "请输入有效的持仓成本单价和持有份额" : "请输入有效的持仓数量和成本价";
+                errorText.Text = isFund ? "请输入有效的持仓成本单价和持有份额" : "请输入有效的持仓成本价和持有数量";
                 errorText.Visibility = Visibility.Visible;
                 return;
             }
 
-            if ((shares == 0 && cost > 0) || (shares > 0 && cost == 0))
+            // 份额为 0 即不持仓，成本价可忽略；有份额时成本价必须 > 0
+            if (shares > 0 && cost <= 0)
             {
-                errorText.Text = isFund ? "清空持仓时成本单价和份额都填 0 或留空" : "清空持仓时数量和成本价都填 0 或留空";
+                errorText.Text = isFund ? "请填写有效的持仓成本单价" : "请填写有效的持仓成本价";
                 errorText.Visibility = Visibility.Visible;
                 return;
             }
 
-            result = (shares, cost);
+            result = (shares, shares > 0 ? cost : 0);
+            dialog.DialogResult = true;
+        };
+        clearBtn.Click += (_, _) =>
+        {
+            result = (0, 0);
             dialog.DialogResult = true;
         };
         cancelBtn.Click += (_, _) => dialog.DialogResult = false;
 
+        var costLabel = isFund ? "持仓成本单价" : "持仓成本价";
+        var sharesLabel = isFund ? "持有份额" : "持有数量";
+        var subtitle = $"{stock.DisplayName} ({stock.CodeNumeric})";
+
+        var header = new StackPanel
+        {
+            Orientation = Orientation.Horizontal,
+            Margin = new Thickness(0, 0, 0, 22)
+        };
+        header.Children.Add(CreateHoldingWalletIcon());
+        var headerText = new StackPanel { Margin = new Thickness(10, 0, 0, 0), VerticalAlignment = VerticalAlignment.Center };
+        headerText.Children.Add(new TextBlock
+        {
+            Text = "持仓设置",
+            FontSize = 18,
+            FontWeight = FontWeights.SemiBold,
+            Foreground = new SolidColorBrush(Color.FromRgb(0x0F, 0x17, 0x2A))
+        });
+        headerText.Children.Add(new TextBlock
+        {
+            Text = subtitle,
+            FontSize = 12.5,
+            Margin = new Thickness(0, 3, 0, 0),
+            Foreground = new SolidColorBrush(Color.FromRgb(0x94, 0xA3, 0xB8))
+        });
+        header.Children.Add(headerText);
+
+        var fields = new StackPanel();
+        fields.Children.Add(CreateHoldingFieldLabel(costLabel));
+        fields.Children.Add(costBox);
+        fields.Children.Add(CreateHoldingFieldLabel(sharesLabel, topMargin: 14));
+        fields.Children.Add(sharesBox);
+        fields.Children.Add(errorText);
+
         var buttons = new StackPanel
         {
             Orientation = Orientation.Horizontal,
-            HorizontalAlignment = System.Windows.HorizontalAlignment.Right,
-            Margin = new Thickness(0, 16, 0, 0)
+            HorizontalAlignment = HorizontalAlignment.Right,
+            Margin = new Thickness(0, 22, 0, 0)
         };
-        buttons.Children.Add(okBtn);
         buttons.Children.Add(cancelBtn);
+        buttons.Children.Add(clearBtn);
+        buttons.Children.Add(saveBtn);
 
-        var topLabel = isFund ? "持仓成本单价" : "成本价";
-        var bottomLabel = isFund ? "持有份额" : "持仓数量";
-
-        var stack = new StackPanel { Margin = new Thickness(20) };
-        stack.Children.Add(new TextBlock
-        {
-            Text = $"设置 {stock.DisplayName} 持仓",
-            FontSize = 14,
-            FontWeight = FontWeights.SemiBold,
-            Margin = new Thickness(0, 0, 0, 12),
-            Foreground = new SolidColorBrush(Color.FromRgb(0x1A, 0x1A, 0x1A))
-        });
-        stack.Children.Add(new TextBlock { Text = topLabel, FontSize = 12, Foreground = new SolidColorBrush(Color.FromRgb(0x66, 0x66, 0x66)) });
-        stack.Children.Add(costBox);
-        stack.Children.Add(new TextBlock { Text = bottomLabel, FontSize = 12, Margin = new Thickness(0, 8, 0, 0), Foreground = new SolidColorBrush(Color.FromRgb(0x66, 0x66, 0x66)) });
-        stack.Children.Add(sharesBox);
-        stack.Children.Add(errorText);
+        var stack = new StackPanel { Margin = new Thickness(24, 22, 24, 22) };
+        stack.Children.Add(header);
+        stack.Children.Add(fields);
         stack.Children.Add(buttons);
 
-        dialog.Content = new Border
+        var card = new Border
         {
-            Background = new SolidColorBrush(Color.FromArgb(0xF8, 0xFF, 0xFF, 0xFF)),
-            BorderBrush = new SolidColorBrush(Color.FromArgb(0xD0, 0xCC, 0xCC, 0xCC)),
+            Background = Brushes.White,
+            BorderBrush = new SolidColorBrush(Color.FromRgb(0xE8, 0xEC, 0xF1)),
             BorderThickness = new Thickness(1),
-            CornerRadius = new CornerRadius(12),
-            Child = stack
+            CornerRadius = new CornerRadius(18),
+            Margin = new Thickness(10),
+            Child = stack,
+            Effect = new DropShadowEffect
+            {
+                BlurRadius = 28,
+                ShadowDepth = 0,
+                Opacity = 0.18,
+                Color = Color.FromRgb(0x15, 0x23, 0x3B)
+            }
         };
+
+        dialog.Content = card;
         dialog.MouseLeftButtonDown += (_, _) => dialog.DragMove();
         dialog.Loaded += (_, _) =>
         {
@@ -1015,6 +1088,184 @@ public partial class MainWindow : Window
         };
 
         return dialog.ShowDialog() == true ? result : null;
+    }
+
+    private static TextBlock CreateHoldingFieldLabel(string text, double topMargin = 0) => new()
+    {
+        Text = text,
+        FontSize = 12,
+        Margin = new Thickness(2, topMargin, 0, 6),
+        Foreground = new SolidColorBrush(Color.FromRgb(0x94, 0xA3, 0xB8))
+    };
+
+    private static FrameworkElement CreateHoldingWalletIcon()
+    {
+        var canvas = new Canvas { Width = 22, Height = 22 };
+        canvas.Children.Add(new System.Windows.Shapes.Path
+        {
+            Data = Geometry.Parse("M4,7.5 L18,7.5 A2,2 0 0 1 20,9.5 L20,16.5 A2,2 0 0 1 18,18.5 L4,18.5 A2,2 0 0 1 2,16.5 L2,5.5 A2,2 0 0 1 4,3.5 L14.5,3.5 A2,2 0 0 1 16.5,5.5 L16.5,7.5"),
+            Stroke = new SolidColorBrush(Color.FromRgb(0x0F, 0x17, 0x2A)),
+            StrokeThickness = 1.6,
+            Fill = Brushes.Transparent,
+            StrokeStartLineCap = PenLineCap.Round,
+            StrokeEndLineCap = PenLineCap.Round,
+            StrokeLineJoin = PenLineJoin.Round
+        });
+        canvas.Children.Add(new System.Windows.Shapes.Path
+        {
+            Data = Geometry.Parse("M15.5,13 L20,13"),
+            Stroke = new SolidColorBrush(Color.FromRgb(0x0F, 0x17, 0x2A)),
+            StrokeThickness = 1.6,
+            StrokeStartLineCap = PenLineCap.Round,
+            StrokeEndLineCap = PenLineCap.Round
+        });
+        var clasp = new Ellipse
+        {
+            Width = 2.2,
+            Height = 2.2,
+            Fill = new SolidColorBrush(Color.FromRgb(0x0F, 0x17, 0x2A))
+        };
+        Canvas.SetLeft(clasp, 14.2);
+        Canvas.SetTop(clasp, 11.9);
+        canvas.Children.Add(clasp);
+        return new Border
+        {
+            Width = 36,
+            Height = 36,
+            CornerRadius = new CornerRadius(10),
+            Background = new SolidColorBrush(Color.FromRgb(0xF3, 0xF5, 0xF8)),
+            Child = new Viewbox
+            {
+                Width = 18,
+                Height = 18,
+                Child = canvas,
+                VerticalAlignment = VerticalAlignment.Center,
+                HorizontalAlignment = HorizontalAlignment.Center
+            }
+        };
+    }
+
+    private static TextBox CreateHoldingTextBox(string text)
+    {
+        var box = new TextBox
+        {
+            Text = text,
+            Height = 42,
+            FontSize = 14,
+            Padding = new Thickness(14, 0, 14, 0),
+            VerticalContentAlignment = VerticalAlignment.Center,
+            Background = new SolidColorBrush(Color.FromRgb(0xF5, 0xF7, 0xFA)),
+            Foreground = new SolidColorBrush(Color.FromRgb(0x0F, 0x17, 0x2A)),
+            CaretBrush = new SolidColorBrush(Color.FromRgb(0x0F, 0x17, 0x2A)),
+            BorderThickness = new Thickness(0),
+            FontFamily = new FontFamily("Microsoft YaHei UI")
+        };
+
+        var template = new ControlTemplate(typeof(TextBox));
+        var border = new FrameworkElementFactory(typeof(Border));
+        border.Name = "Bd";
+        border.SetValue(Border.BackgroundProperty, new TemplateBindingExtension(Control.BackgroundProperty));
+        border.SetValue(Border.CornerRadiusProperty, new CornerRadius(12));
+        border.SetValue(Border.PaddingProperty, new TemplateBindingExtension(Control.PaddingProperty));
+        border.SetValue(Border.SnapsToDevicePixelsProperty, true);
+
+        var scroll = new FrameworkElementFactory(typeof(ScrollViewer));
+        scroll.Name = "PART_ContentHost";
+        scroll.SetValue(FrameworkElement.VerticalAlignmentProperty, VerticalAlignment.Center);
+        border.AppendChild(scroll);
+        template.VisualTree = border;
+        box.Template = template;
+        return box;
+    }
+
+    private static System.Windows.Controls.Button CreateHoldingActionButton(string text, bool isPrimary, bool withSaveIcon = false)
+    {
+        var bg = isPrimary
+            ? new SolidColorBrush(Color.FromRgb(0x0F, 0x17, 0x2A))
+            : new SolidColorBrush(Color.FromRgb(0xEE, 0xF1, 0xF5));
+        var fg = isPrimary
+            ? Brushes.White
+            : new SolidColorBrush(Color.FromRgb(0x33, 0x41, 0x55));
+        var hoverBg = isPrimary
+            ? new SolidColorBrush(Color.FromRgb(0x1E, 0x29, 0x3B))
+            : new SolidColorBrush(Color.FromRgb(0xE2, 0xE8, 0xF0));
+
+        object content = text;
+        if (withSaveIcon)
+        {
+            var icon = new System.Windows.Shapes.Path
+            {
+                Data = Geometry.Parse("M3.5,3.5 L12.2,3.5 L14.5,5.8 L14.5,14.5 L3.5,14.5 Z M5.2,3.5 L5.2,7.4 L11.2,7.4 L11.2,3.5 M5.8,10.2 L12.2,10.2 L12.2,14.5 L5.8,14.5 Z"),
+                Stroke = Brushes.White,
+                StrokeThickness = 1.35,
+                Fill = Brushes.Transparent,
+                StrokeStartLineCap = PenLineCap.Round,
+                StrokeEndLineCap = PenLineCap.Round,
+                StrokeLineJoin = PenLineJoin.Round,
+                Width = 14,
+                Height = 14,
+                Stretch = Stretch.Uniform,
+                Margin = new Thickness(0, 0, 7, 0),
+                VerticalAlignment = VerticalAlignment.Center
+            };
+            var row = new StackPanel { Orientation = Orientation.Horizontal };
+            row.Children.Add(icon);
+            row.Children.Add(new TextBlock
+            {
+                Text = text,
+                VerticalAlignment = VerticalAlignment.Center,
+                FontSize = 13.5,
+                FontWeight = FontWeights.SemiBold
+            });
+            content = row;
+        }
+
+        var btn = new System.Windows.Controls.Button
+        {
+            Content = content,
+            Background = bg,
+            Foreground = fg,
+            BorderThickness = new Thickness(0),
+            FontSize = 13.5,
+            FontWeight = isPrimary ? FontWeights.SemiBold : FontWeights.Normal,
+            Cursor = Cursors.Hand,
+            MinWidth = isPrimary ? 96 : 84,
+            Height = 40,
+            Padding = new Thickness(18, 0, 18, 0)
+        };
+
+        if (isPrimary)
+        {
+            btn.Effect = new DropShadowEffect
+            {
+                BlurRadius = 16,
+                ShadowDepth = 4,
+                Direction = 270,
+                Opacity = 0.28,
+                Color = Color.FromRgb(0x0F, 0x17, 0x2A)
+            };
+        }
+
+        var template = new ControlTemplate(typeof(System.Windows.Controls.Button));
+        var border = new FrameworkElementFactory(typeof(Border));
+        border.SetBinding(Border.BackgroundProperty,
+            new System.Windows.Data.Binding(nameof(Control.Background))
+            {
+                RelativeSource = new RelativeSource(RelativeSourceMode.TemplatedParent)
+            });
+        border.SetValue(Border.CornerRadiusProperty, new CornerRadius(12));
+        border.SetValue(Border.PaddingProperty, new TemplateBindingExtension(Control.PaddingProperty));
+        var presenter = new FrameworkElementFactory(typeof(ContentPresenter));
+        presenter.SetValue(ContentPresenter.HorizontalAlignmentProperty, HorizontalAlignment.Center);
+        presenter.SetValue(ContentPresenter.VerticalAlignmentProperty, VerticalAlignment.Center);
+        border.AppendChild(presenter);
+        template.VisualTree = border;
+
+        var hover = new Trigger { Property = UIElement.IsMouseOverProperty, Value = true };
+        hover.Setters.Add(new Setter(Control.BackgroundProperty, hoverBg));
+        template.Triggers.Add(hover);
+        btn.Template = template;
+        return btn;
     }
 
     private static TextBox CreateDialogTextBox(string text) => new()

@@ -41,6 +41,7 @@ public class EastMoneyClient
         {
             "SH" => 1,
             "SZ" => 0,
+            "BJ" => 0, // 北交所在东财仍为市场 0
             "HK" => 116,
             _ => throw new ArgumentException($"Unknown market prefix: {prefix}")
         };
@@ -64,23 +65,54 @@ public class EastMoneyClient
 
         if (market is 1 or 0 or 116)
         {
+            string raw = parts[1];
             string prefix = market switch
             {
                 1 => "SH",
-                0 => "SZ",
+                // 北交所代码多为 4/8/9 开头（如 899050、430047）
+                0 => IsBeijingExchangeCode(raw) ? "BJ" : "SZ",
                 116 => "HK",
                 _ => "SH"
             };
-            return $"{prefix}{parts[1]}";
+            return $"{prefix}{raw}";
         }
 
-        // 全球指数等：100.HSI → IX100.HSI
-        return $"IX{parts[0]}.{parts[1]}";
+        // 全球指数等：100.HSI → IX100.HSI；腾讯道指代码 DJI 归一为 DJIA
+        string sym = parts[1].TrimStart('.');
+        if (string.Equals(sym, "DJI", StringComparison.OrdinalIgnoreCase))
+            sym = "DJIA";
+        return $"IX{parts[0]}.{sym}";
     }
 
-    /// <summary>东财 push2 批量报价（公开给指数等场景）。</summary>
-    public Task<List<QuoteItem>> GetPush2QuotesAsync(IReadOnlyList<string> internalCodes)
-        => GetEastMoneyQuotesAsync(internalCodes);
+    /// <summary>北交所证券/指数代码（市场号与深市同为 0）</summary>
+    public static bool IsBeijingExchangeCode(string code) =>
+        !string.IsNullOrEmpty(code)
+        && (code.StartsWith('4') || code.StartsWith('8') || code.StartsWith('9'));
+
+    /// <summary>全球指数等：东财 push2 优先，失败回退腾讯（usNDX / hkHSI）。</summary>
+    public async Task<List<QuoteItem>> GetPush2QuotesAsync(IReadOnlyList<string> internalCodes)
+    {
+        if (internalCodes.Count == 0) return [];
+        try
+        {
+            var em = await GetEastMoneyQuotesAsync(internalCodes);
+            if (em.Count > 0 && em.Any(r => r.F2 > 0))
+                return em;
+        }
+        catch
+        {
+            // fall through
+        }
+
+        try
+        {
+            return await GetTencentQuotesAsync(internalCodes);
+        }
+        catch
+        {
+            return [];
+        }
+    }
 
     public static bool IsFundCode(string internalCode)
         => internalCode.StartsWith("FD", StringComparison.OrdinalIgnoreCase);
@@ -92,6 +124,7 @@ public class EastMoneyClient
     {
         "SH" => "沪A",
         "SZ" => "深A",
+        "BJ" => "北交所",
         "HK" => "港股",
         "FD" => "基金",
         _ => prefix
@@ -299,6 +332,7 @@ public class EastMoneyClient
 
                 int market = varName.Contains("sh", StringComparison.OrdinalIgnoreCase) ? 1
                     : varName.Contains("sz", StringComparison.OrdinalIgnoreCase) ? 0
+                    : varName.Contains("bj", StringComparison.OrdinalIgnoreCase) ? 0
                     : 116;
 
                 result.Add(new QuoteItem
@@ -331,8 +365,13 @@ public class EastMoneyClient
 
     private async Task<List<QuoteItem>> GetTencentQuotesAsync(IReadOnlyList<string> internalCodes)
     {
-        // https://qt.gtimg.cn/q=sh600036,hk01810
-        var symbols = internalCodes.Select(c => $"{c[..2].ToLowerInvariant()}{c[2..]}");
+        // https://qt.gtimg.cn/q=sh600036,hk01810,bj899050,usNDX
+        var symbols = internalCodes
+            .Select(ToTencentSymbol)
+            .Where(s => !string.IsNullOrEmpty(s))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+        if (symbols.Count == 0) return [];
         string url = $"https://qt.gtimg.cn/q={string.Join(",", symbols)}";
 
         try
@@ -376,11 +415,9 @@ public class EastMoneyClient
                 TryParseDec(f.Length > 49 ? f[49] : "0", out var volumeRatio);
                 TryParseDec(f.Length > 80 ? f[80] : "0", out var speed);
 
-                string code = f[2];
-                string head = segment[..eq]; // v_sh600036
-                int market = 1;
-                if (head.Contains("sz", StringComparison.OrdinalIgnoreCase)) market = 0;
-                else if (head.Contains("hk", StringComparison.OrdinalIgnoreCase)) market = 116;
+                string code = (f[2] ?? "").TrimStart('.');
+                string head = segment[..eq]; // v_sh600036 / v_usNDX / v_bj899050
+                int market = ResolveTencentMarket(head, code);
 
                 result.Add(new QuoteItem
                 {
@@ -408,22 +445,155 @@ public class EastMoneyClient
         }
     }
 
+    /// <summary>内部代码 → 腾讯行情符号</summary>
+    private static string ToTencentSymbol(string internalCode)
+    {
+        if (string.IsNullOrWhiteSpace(internalCode) || internalCode.Length < 3)
+            return "";
+
+        if (internalCode.StartsWith("IX", StringComparison.OrdinalIgnoreCase) && internalCode.Contains('.'))
+        {
+            string sym = internalCode[(internalCode.LastIndexOf('.') + 1)..].Trim().ToUpperInvariant();
+            return sym switch
+            {
+                "NDX" or "IXIC" => "usNDX",
+                "SPX" => "usSPX",
+                "DJIA" or "DJI" => "usDJI",
+                "HSI" => "hkHSI",
+                _ => $"us{sym}"
+            };
+        }
+
+        string prefix = internalCode[..2].ToLowerInvariant();
+        string code = internalCode[2..];
+        return prefix switch
+        {
+            "sh" or "sz" or "hk" or "bj" => prefix + code,
+            "fd" => "",
+            _ => prefix + code
+        };
+    }
+
+    private static int ResolveTencentMarket(string head, string code)
+    {
+        if (head.Contains("us", StringComparison.OrdinalIgnoreCase)) return 100;
+        if (head.Contains("hk", StringComparison.OrdinalIgnoreCase))
+            return string.Equals(code, "HSI", StringComparison.OrdinalIgnoreCase) ? 100 : 116;
+        if (head.Contains("bj", StringComparison.OrdinalIgnoreCase)) return 0;
+        if (head.Contains("sz", StringComparison.OrdinalIgnoreCase)) return 0;
+        return 1; // sh
+    }
+
     private static bool TryParseDec(string s, out decimal value)
         => decimal.TryParse(s, System.Globalization.NumberStyles.Any,
             System.Globalization.CultureInfo.InvariantCulture, out value);
 
-    // ── 汇率（港币 → 人民币中间价）──────────────────────────
+    // ── 汇率（港股通参考汇率，对齐券商/同花顺持仓折算）──────────────────────────
 
     private decimal? _cachedHkdCnyRate;
     private DateTime _cachedHkdCnyAt = DateTime.MinValue;
 
-    /// <summary>港币兑人民币中间价（1 港币 = ? 人民币）。失败返回 null，沿用缓存。</summary>
+    private static readonly HttpClient FxHttp = CreateFxHttp();
+
+    private static HttpClient CreateFxHttp()
+    {
+        var http = new HttpClient { Timeout = TimeSpan.FromSeconds(8) };
+        http.DefaultRequestHeaders.TryAddWithoutValidation("User-Agent",
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36");
+        http.DefaultRequestHeaders.TryAddWithoutValidation("Accept", "*/*");
+        return http;
+    }
+
+    /// <summary>
+    /// 1 港币折合人民币。优先上交所港股通参考汇率买卖中间价（与同花顺市值一致），
+    /// 失败再回退东财港币人民币中间价。
+    /// </summary>
     public async Task<decimal?> GetHkdCnyRateAsync()
     {
         if (_cachedHkdCnyRate is > 0
             && DateTime.Now - _cachedHkdCnyAt < TimeSpan.FromMinutes(10))
             return _cachedHkdCnyRate;
 
+        decimal? rate = await FetchSseHkConnectMidRateAsync();
+        rate ??= await FetchEastMoneyHkdCnyMidAsync();
+        if (rate is not > 0) return _cachedHkdCnyRate;
+
+        _cachedHkdCnyRate = rate;
+        _cachedHkdCnyAt = DateTime.Now;
+        return rate;
+    }
+
+    /// <summary>上交所港股通参考汇率：(买入价+卖出价)/2</summary>
+    private static async Task<decimal?> FetchSseHkConnectMidRateAsync()
+    {
+        // https://www.sse.com.cn/services/hkexsc/disclo/ratios/
+        string today = DateTime.Now.ToString("yyyyMMdd");
+        string begin = DateTime.Now.AddDays(-14).ToString("yyyyMMdd");
+        string url = "https://query.sse.com.cn/commonSoaQuery.do"
+                     + "?sqlId=FW_HGT_GGTHL"
+                     + $"&updateDate={begin}&updateDateEnd={today}"
+                     + "&isPagination=true&pageHelp.pageSize=5&pageHelp.pageNo=1";
+        try
+        {
+            using var req = new HttpRequestMessage(HttpMethod.Get, url);
+            req.Headers.TryAddWithoutValidation("Referer", "https://www.sse.com.cn/");
+            using var resp = await FxHttp.SendAsync(req);
+            if (!resp.IsSuccessStatusCode) return null;
+
+            string json = await resp.Content.ReadAsStringAsync();
+            if (string.IsNullOrWhiteSpace(json) || json.Length < 20) return null;
+
+            using var doc = JsonDocument.Parse(json);
+            if (!TryGetSseRateArray(doc.RootElement, out var arr)) return null;
+
+            foreach (var item in arr.EnumerateArray())
+            {
+                if (item.ValueKind != JsonValueKind.Object) continue;
+                if (!TryReadSsePrice(item, "buyPrice", out var buy)) continue;
+                if (!TryReadSsePrice(item, "sellPrice", out var sell)) continue;
+                if (buy <= 0 || sell <= 0) continue;
+
+                decimal mid = (buy + sell) / 2m;
+                if (mid > 0 && mid < 2m) return mid;
+            }
+            return null;
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    private static bool TryGetSseRateArray(JsonElement root, out JsonElement arr)
+    {
+        arr = default;
+        if (root.TryGetProperty("result", out var result) && result.ValueKind == JsonValueKind.Array
+            && result.GetArrayLength() > 0)
+        {
+            arr = result;
+            return true;
+        }
+        if (root.TryGetProperty("pageHelp", out var page)
+            && page.ValueKind == JsonValueKind.Object
+            && page.TryGetProperty("data", out var data)
+            && data.ValueKind == JsonValueKind.Array
+            && data.GetArrayLength() > 0)
+        {
+            arr = data;
+            return true;
+        }
+        return false;
+    }
+
+    private static bool TryReadSsePrice(JsonElement item, string name, out decimal value)
+    {
+        value = 0;
+        if (!item.TryGetProperty(name, out var el)) return false;
+        return TryParseDec((el.GetString() ?? el.ToString()).Trim(), out value) && value > 0;
+    }
+
+    private static async Task<decimal?> FetchEastMoneyHkdCnyMidAsync()
+    {
         // https://quote.eastmoney.com/cnyrate/HKDCNYC.html
         string url = "https://push2.eastmoney.com/api/qt/stock/get"
                      + "?secid=120.HKDCNYC&fields=f43,f60&fltt=2";
@@ -431,32 +601,27 @@ public class EastMoneyClient
         {
             using var req = new HttpRequestMessage(HttpMethod.Get, url);
             req.Headers.TryAddWithoutValidation("Referer", "https://quote.eastmoney.com/");
-            using var resp = await _http.SendAsync(req);
-            if (!resp.IsSuccessStatusCode) return _cachedHkdCnyRate;
+            using var resp = await FxHttp.SendAsync(req);
+            if (!resp.IsSuccessStatusCode) return null;
 
             string json = await resp.Content.ReadAsStringAsync();
             using var doc = JsonDocument.Parse(json);
             if (!doc.RootElement.TryGetProperty("data", out var data)
                 || data.ValueKind != JsonValueKind.Object)
-                return _cachedHkdCnyRate;
+                return null;
 
             decimal rate = 0;
             if (data.TryGetProperty("f43", out var f43))
                 rate = ReadDecimal(f43);
             if (rate <= 0 && data.TryGetProperty("f60", out var f60))
-                rate = ReadDecimal(f60); // 昨收兜底
+                rate = ReadDecimal(f60);
 
-            // 偶发按「100 港币」报价（如 85.6）
             if (rate > 10m) rate /= 100m;
-            if (rate <= 0 || rate > 2m) return _cachedHkdCnyRate;
-
-            _cachedHkdCnyRate = rate;
-            _cachedHkdCnyAt = DateTime.Now;
-            return rate;
+            return rate is > 0 and < 2m ? rate : null;
         }
         catch
         {
-            return _cachedHkdCnyRate;
+            return null;
         }
     }
 

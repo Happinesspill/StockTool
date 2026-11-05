@@ -23,6 +23,7 @@ public class MainViewModel : INotifyPropertyChanged
     private readonly IntradayService _intradayService;
     private readonly FundNavService _fundNavService;
     private readonly FundDcaService _fundDcaService;
+    private readonly TaskbarOverlayService _taskbarOverlay;
     private AppConfig _config;
     private FundPortfolioConfig _funds;
 
@@ -36,6 +37,10 @@ public class MainViewModel : INotifyPropertyChanged
     public ObservableCollection<IndexOptionItem> IndexOptions { get; } = [];
     /// <summary>管理窗：已选指数卡片（与 Indices 同源顺序）。</summary>
     public ObservableCollection<IndexItem> SelectedHomeIndices { get; } = [];
+    /// <summary>电脑任务栏股票（管理页编辑 + 叠层展示）。</summary>
+    public ObservableCollection<TaskbarStockViewItem> TaskbarStocks { get; } = [];
+    /// <summary>可选屏幕编号（1..N），供管理页下拉使用。</summary>
+    public ObservableCollection<int> AvailableScreens { get; } = [];
     public event Action<string>? AlertTriggered;
     public decimal HoldingMarketValue => IsFundGroup
         ? GetDistinctFundHoldings().Sum(s => s.HoldingAmount)
@@ -526,6 +531,11 @@ public class MainViewModel : INotifyPropertyChanged
         foreach (var entry in _funds.Items)
             Stocks.Add(ToStockItem(entry));
 
+        EnsureTaskbarStocksInWatchlist();
+        RebuildTaskbarStocks();
+        RefreshAvailableScreens();
+        _taskbarOverlay = new TaskbarOverlayService(TaskbarStocks);
+
         RefreshVisibleStocks();
 
         _quoteService.Start();
@@ -533,6 +543,7 @@ public class MainViewModel : INotifyPropertyChanged
         _ = _intradayService.LoadAllAsync();
         _intradayService.Start();
         _fundDcaService.Start();
+        _taskbarOverlay.Start();
 
         UpdateTimers();
     }
@@ -637,19 +648,23 @@ public class MainViewModel : INotifyPropertyChanged
     // 打开管理页时记录快照，供取消回滚
     public void BeginManageGroupsEdit()
     {
+        RefreshAvailableScreens();
         _manageSnapshot = new ManageGroupsSnapshot
         {
             HomeIndexCodes = _config.HomeIndexCodes.ToList(),
             Groups = _config.Groups.Select(g => new WatchlistGroup { Id = g.Id, Name = g.Name }).ToList(),
             WatchlistGroupIds = _config.Watchlist.Select(e => e.GroupId).ToList(),
-            SelectedGroupId = _config.SelectedGroupId
+            SelectedGroupId = _config.SelectedGroupId,
+            TaskbarStocks = CloneTaskbarEntries(_config.TaskbarStocks)
         };
     }
 
     public void CommitManageGroupsEdit()
     {
+        PersistTaskbarStocksFromView();
         _manageSnapshot = null;
         _configStore.Save(_config);
+        _taskbarOverlay.Refresh();
     }
 
     public void CancelManageGroupsEdit()
@@ -662,6 +677,7 @@ public class MainViewModel : INotifyPropertyChanged
         _config.Groups = snap.Groups
             .Select(g => new WatchlistGroup { Id = g.Id, Name = g.Name })
             .ToList();
+        _config.TaskbarStocks = CloneTaskbarEntries(snap.TaskbarStocks);
 
         int count = Math.Min(_config.Watchlist.Count, snap.WatchlistGroupIds.Count);
         for (int i = 0; i < count; i++)
@@ -680,6 +696,7 @@ public class MainViewModel : INotifyPropertyChanged
 
         RebuildIndices();
         RebuildIndexOptions();
+        RebuildTaskbarStocks();
         RefreshVisibleStocks();
         OnPropertyChanged(nameof(SelectedGroupId));
         OnPropertyChanged(nameof(SelectedGroupName));
@@ -706,6 +723,7 @@ public class MainViewModel : INotifyPropertyChanged
         OnPropertyChanged(nameof(CanReorder));
         OnPropertyChanged(nameof(HoldingAmountSortArrow));
         _configStore.Save(_config);
+        _taskbarOverlay.Refresh();
         _ = _quoteService.RefreshNowAsync();
     }
 
@@ -715,6 +733,162 @@ public class MainViewModel : INotifyPropertyChanged
         public List<WatchlistGroup> Groups { get; init; } = [];
         public List<string> WatchlistGroupIds { get; init; } = [];
         public string SelectedGroupId { get; init; } = string.Empty;
+        public List<TaskbarStockEntry> TaskbarStocks { get; init; } = [];
+    }
+
+    private static List<TaskbarStockEntry> CloneTaskbarEntries(IEnumerable<TaskbarStockEntry> source) =>
+        source.Select(e => new TaskbarStockEntry
+        {
+            Code = e.Code,
+            Name = e.Name,
+            Market = e.Market,
+            Screen = e.Screen < 1 ? 1 : e.Screen
+        }).ToList();
+
+    public void RefreshAvailableScreens()
+    {
+        int count = Math.Max(1, TaskbarGeometry.GetScreenCount());
+        AvailableScreens.Clear();
+        for (int i = 1; i <= count; i++)
+            AvailableScreens.Add(i);
+    }
+
+    private void EnsureTaskbarStocksInWatchlist()
+    {
+        _config.TaskbarStocks ??= [];
+        string defaultGroupId = Groups.FirstOrDefault(g => g.Name == DefaultGroupName)?.Id
+            ?? Groups.FirstOrDefault(g => g.Id != HoldingGroupId)?.Id
+            ?? string.Empty;
+
+        bool changed = false;
+        foreach (var entry in _config.TaskbarStocks)
+        {
+            if (string.IsNullOrWhiteSpace(entry.Code)) continue;
+            if (entry.Screen < 1) entry.Screen = 1;
+
+            bool exists = Stocks.Any(s =>
+                string.Equals(s.Code, entry.Code, StringComparison.OrdinalIgnoreCase));
+            if (exists) continue;
+
+            var watch = new WatchlistEntry
+            {
+                Code = entry.Code,
+                Name = string.IsNullOrWhiteSpace(entry.Name) ? entry.Code : entry.Name,
+                Market = entry.Market,
+                GroupId = defaultGroupId
+            };
+            _config.Watchlist.Add(watch);
+            Stocks.Add(ToStockItem(watch));
+            changed = true;
+        }
+
+        if (changed)
+            _configStore.Save(_config);
+    }
+
+    private void RebuildTaskbarStocks()
+    {
+        TaskbarStocks.Clear();
+        foreach (var entry in _config.TaskbarStocks)
+        {
+            if (string.IsNullOrWhiteSpace(entry.Code)) continue;
+            var stock = Stocks.FirstOrDefault(s =>
+                string.Equals(s.Code, entry.Code, StringComparison.OrdinalIgnoreCase));
+            if (stock == null) continue;
+            TaskbarStocks.Add(new TaskbarStockViewItem(stock, entry.Screen < 1 ? 1 : entry.Screen));
+        }
+    }
+
+    private void PersistTaskbarStocksFromView()
+    {
+        _config.TaskbarStocks = TaskbarStocks.Select(i => new TaskbarStockEntry
+        {
+            Code = i.Stock.Code,
+            Name = i.Stock.Name,
+            Market = i.Stock.Market,
+            Screen = i.Screen < 1 ? 1 : i.Screen
+        }).ToList();
+    }
+
+    /// <summary>将自选/搜索结果加入任务栏；已存在则更新屏幕。</summary>
+    public string? AddTaskbarStock(string code, string name, string market, int screen)
+    {
+        if (string.IsNullOrWhiteSpace(code))
+            return "股票代码无效";
+
+        int maxScreen = Math.Max(1, AvailableScreens.Count);
+        if (screen < 1 || screen > maxScreen)
+            screen = 1;
+
+        var existing = TaskbarStocks.FirstOrDefault(t =>
+            string.Equals(t.Stock.Code, code, StringComparison.OrdinalIgnoreCase));
+        if (existing != null)
+        {
+            existing.Screen = screen;
+            PersistTaskbarStocksFromView();
+            return null;
+        }
+
+        var stock = Stocks.FirstOrDefault(s =>
+            string.Equals(s.Code, code, StringComparison.OrdinalIgnoreCase));
+        if (stock == null)
+        {
+            AddStock(code, name, market);
+            stock = Stocks.FirstOrDefault(s =>
+                string.Equals(s.Code, code, StringComparison.OrdinalIgnoreCase));
+        }
+
+        if (stock == null)
+            return "添加失败";
+
+        TaskbarStocks.Add(new TaskbarStockViewItem(stock, screen));
+        PersistTaskbarStocksFromView();
+        _ = _intradayService.LoadAllAsync();
+        return null;
+    }
+
+    public void RemoveTaskbarStock(string code)
+    {
+        for (int i = TaskbarStocks.Count - 1; i >= 0; i--)
+        {
+            if (string.Equals(TaskbarStocks[i].Stock.Code, code, StringComparison.OrdinalIgnoreCase))
+                TaskbarStocks.RemoveAt(i);
+        }
+
+        PersistTaskbarStocksFromView();
+    }
+
+    public void RemoveTaskbarStockAt(int index)
+    {
+        if (index < 0 || index >= TaskbarStocks.Count) return;
+        TaskbarStocks.RemoveAt(index);
+        PersistTaskbarStocksFromView();
+    }
+
+    public void SetTaskbarStockScreen(TaskbarStockViewItem item, int screen)
+    {
+        if (item == null) return;
+        int maxScreen = Math.Max(1, AvailableScreens.Count);
+        item.Screen = Math.Clamp(screen, 1, maxScreen);
+        PersistTaskbarStocksFromView();
+    }
+
+    public void ReorderTaskbarStock(int fromIndex, int toIndex)
+    {
+        if (fromIndex < 0 || fromIndex >= TaskbarStocks.Count) return;
+        if (toIndex < 0 || toIndex >= TaskbarStocks.Count) return;
+        if (fromIndex == toIndex) return;
+
+        var item = TaskbarStocks[fromIndex];
+        TaskbarStocks.RemoveAt(fromIndex);
+        TaskbarStocks.Insert(toIndex, item);
+        PersistTaskbarStocksFromView();
+    }
+
+    public void MoveTaskbarStock(int index, int offset)
+    {
+        int target = index + offset;
+        ReorderTaskbarStock(index, target);
     }
 
     private void OnQuotesUpdated()
@@ -1263,6 +1437,10 @@ public class MainViewModel : INotifyPropertyChanged
             _configStore.Save(_config);
         }
 
+        // 同代码若已无其它分组副本，一并移出任务栏
+        if (!Stocks.Any(s => s.Code.Equals(stock.Code, StringComparison.OrdinalIgnoreCase)))
+            RemoveTaskbarStock(stock.Code);
+
         RefreshVisibleStocks();
     }
 
@@ -1644,6 +1822,8 @@ public class MainViewModel : INotifyPropertyChanged
         _quoteService.UpdateInterval();
         _intradayService.SetInterval(TradingHours.GetIntradayInterval(trading));
     }
+
+    public void DisposeTaskbarOverlay() => _taskbarOverlay.Dispose();
 
     private static List<WatchlistEntry> GetDefaultWatchlist(string groupId) =>
     [

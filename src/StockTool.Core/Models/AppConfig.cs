@@ -11,6 +11,8 @@ public class AppConfig
     public List<AlertRule> AlertRules { get; set; } = [];
     /// <summary>首页指数内部 Code，最多 4 个。</summary>
     public List<string> HomeIndexCodes { get; set; } = [];
+    /// <summary>电脑任务栏展示的股票（按顺序；Screen 为 1/2）。</summary>
+    public List<TaskbarStockEntry> TaskbarStocks { get; set; } = [];
     public string SelectedGroupId { get; set; } = string.Empty;
     /// <summary>旧字段：default | change。保留用于迁移。</summary>
     public string SortMode { get; set; } = "default";
@@ -125,6 +127,13 @@ public class AppConfig
         {
             HomeIndexCodes = IndexCatalog.DefaultHomeCodes.ToList();
             return;
+        }
+
+        // 旧配置北证50 误存为 SZ899050 → BJ899050
+        for (int i = 0; i < HomeIndexCodes.Count; i++)
+        {
+            if (string.Equals(HomeIndexCodes[i], "SZ899050", StringComparison.OrdinalIgnoreCase))
+                HomeIndexCodes[i] = "BJ899050";
         }
 
         HomeIndexCodes = HomeIndexCodes
@@ -332,4 +341,14 @@ public class ListColumnWidths
     public double HoldingShares { get; set; } = 68;
     public double Trend { get; set; } = 100;
     public double Price { get; set; } = 96;
+}
+
+/// <summary>任务栏股票条目：绑定屏幕与展示顺序。</summary>
+public class TaskbarStockEntry
+{
+    public string Code { get; set; } = string.Empty;
+    public string Name { get; set; } = string.Empty;
+    public string Market { get; set; } = string.Empty;
+    /// <summary>显示器编号，从 1 起（扩展屏模式可选 1/2）。</summary>
+    public int Screen { get; set; } = 1;
 }
