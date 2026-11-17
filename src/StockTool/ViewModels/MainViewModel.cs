@@ -1,7 +1,8 @@
-﻿using System.Collections.ObjectModel;
+using System.Collections.ObjectModel;
 using System.ComponentModel;
 using System.Runtime.CompilerServices;
 using System.Windows;
+using System.Windows.Media;
 using StockTool.Core.Models;
 using StockTool.Core.Services;
 using StockTool.Data;
@@ -41,6 +42,107 @@ public class MainViewModel : INotifyPropertyChanged
     public ObservableCollection<TaskbarStockViewItem> TaskbarStocks { get; } = [];
     /// <summary>可选屏幕编号（1..N），供管理页下拉使用。</summary>
     public ObservableCollection<int> AvailableScreens { get; } = [];
+
+    /// <summary>预警设置窗：全部预警规则 + 实时行情。</summary>
+    public ObservableCollection<AlertRuleViewItem> AlertItems { get; } = [];
+
+    public const double TaskbarSparklineWidthMin = 30;
+    public const double TaskbarSparklineWidthMax = 120;
+    public const double TaskbarClockGapMin = 0;
+    public const double TaskbarClockGapMax = 600;
+    public const double TaskbarVerticalOffsetMin = -100;
+    public const double TaskbarVerticalOffsetMax = 100;
+    public const int TaskbarTextGrayLevelMin = 1;
+    public const int TaskbarTextGrayLevelMax = 4;
+
+    /// <summary>四个灰色色阶：1 最浅 → 4 最深（适配深色任务栏）。</summary>
+    public static IReadOnlyList<TaskbarGrayOption> TaskbarTextGrayOptions { get; } =
+    [
+        new(1, "浅灰", Color.FromRgb(0xF0, 0xF0, 0xF0)),
+        new(2, "次浅", Color.FromRgb(0xC8, 0xC8, 0xC8)),
+        new(3, "中灰", Color.FromRgb(0x96, 0x96, 0x96)),
+        new(4, "深灰", Color.FromRgb(0x64, 0x64, 0x64)),
+    ];
+
+    /// <summary>任务栏分时图宽度；滑动设置时预览与叠层实时更新。</summary>
+    public double TaskbarSparklineWidth
+    {
+        get => _config.TaskbarSparklineWidth;
+        set
+        {
+            double next = Math.Clamp(value, TaskbarSparklineWidthMin, TaskbarSparklineWidthMax);
+            if (Math.Abs(_config.TaskbarSparklineWidth - next) < 0.01) return;
+            _config.TaskbarSparklineWidth = next;
+            OnPropertyChanged();
+            OnPropertyChanged(nameof(TaskbarSparklineWidthText));
+            _taskbarOverlay.Refresh();
+        }
+    }
+
+    public string TaskbarSparklineWidthText => $"{TaskbarSparklineWidth:0}";
+
+    /// <summary>任务栏叠层与系统时钟的间距；滑动设置时叠层实时移动。</summary>
+    public double TaskbarClockGap
+    {
+        get => _config.TaskbarClockGap;
+        set
+        {
+            double next = Math.Clamp(value, TaskbarClockGapMin, TaskbarClockGapMax);
+            if (Math.Abs(_config.TaskbarClockGap - next) < 0.01) return;
+            _config.TaskbarClockGap = next;
+            OnPropertyChanged();
+            OnPropertyChanged(nameof(TaskbarClockGapText));
+            _taskbarOverlay.Refresh();
+        }
+    }
+
+    public string TaskbarClockGapText => $"{TaskbarClockGap:0}";
+
+    /// <summary>任务栏叠层上下偏移（正数下移）；滑动设置时叠层实时移动。</summary>
+    public double TaskbarVerticalOffset
+    {
+        get => _config.TaskbarVerticalOffset;
+        set
+        {
+            double next = Math.Clamp(value, TaskbarVerticalOffsetMin, TaskbarVerticalOffsetMax);
+            if (Math.Abs(_config.TaskbarVerticalOffset - next) < 0.01) return;
+            _config.TaskbarVerticalOffset = next;
+            OnPropertyChanged();
+            OnPropertyChanged(nameof(TaskbarVerticalOffsetText));
+            _taskbarOverlay.Refresh();
+        }
+    }
+
+    public string TaskbarVerticalOffsetText => $"{TaskbarVerticalOffset:+0;-0;0}";
+
+    /// <summary>任务栏名称/价格灰色色阶 1–4。</summary>
+    public int TaskbarTextGrayLevel
+    {
+        get => _config.TaskbarTextGrayLevel;
+        set
+        {
+            int next = Math.Clamp(value, TaskbarTextGrayLevelMin, TaskbarTextGrayLevelMax);
+            if (_config.TaskbarTextGrayLevel == next) return;
+            _config.TaskbarTextGrayLevel = next;
+            OnPropertyChanged();
+            OnPropertyChanged(nameof(TaskbarTextBrush));
+            _taskbarOverlay.Refresh();
+        }
+    }
+
+    public Brush TaskbarTextBrush => ResolveTaskbarTextBrush(TaskbarTextGrayLevel);
+
+    public static Brush ResolveTaskbarTextBrush(int level)
+    {
+        int idx = Math.Clamp(level, TaskbarTextGrayLevelMin, TaskbarTextGrayLevelMax) - 1;
+        return TaskbarTextGrayOptions[idx].Brush;
+    }
+
+    public void SelectTaskbarTextGrayLevel(int level) => TaskbarTextGrayLevel = level;
+
+    /// <summary>任务栏股票双击：请求打开主窗并定位。</summary>
+    public event Action<StockItem>? TaskbarStockOpenRequested;
+
     public event Action<string>? AlertTriggered;
     public decimal HoldingMarketValue => IsFundGroup
         ? GetDistinctFundHoldings().Sum(s => s.HoldingAmount)
@@ -526,15 +628,34 @@ public class MainViewModel : INotifyPropertyChanged
             _configStore.Save(_config);
         }
 
+        if (ClearStaleHoldingAliasesInConfig())
+            _configStore.Save(_config);
+
         foreach (var entry in _config.Watchlist)
             Stocks.Add(ToStockItem(entry));
         foreach (var entry in _funds.Items)
             Stocks.Add(ToStockItem(entry));
 
         EnsureTaskbarStocksInWatchlist();
+        if (_config.TaskbarSparklineWidth is <= 0 or double.NaN)
+            _config.TaskbarSparklineWidth = 55;
+        _config.TaskbarSparklineWidth = Math.Clamp(
+            _config.TaskbarSparklineWidth, TaskbarSparklineWidthMin, TaskbarSparklineWidthMax);
+        if (_config.TaskbarClockGap is < TaskbarClockGapMin or > TaskbarClockGapMax || double.IsNaN(_config.TaskbarClockGap))
+            _config.TaskbarClockGap = 4;
+        if (_config.TaskbarVerticalOffset is < TaskbarVerticalOffsetMin or > TaskbarVerticalOffsetMax || double.IsNaN(_config.TaskbarVerticalOffset))
+            _config.TaskbarVerticalOffset = 0;
+        if (_config.TaskbarTextGrayLevel is < TaskbarTextGrayLevelMin or > TaskbarTextGrayLevelMax)
+            _config.TaskbarTextGrayLevel = 1;
         RebuildTaskbarStocks();
         RefreshAvailableScreens();
-        _taskbarOverlay = new TaskbarOverlayService(TaskbarStocks);
+        _taskbarOverlay = new TaskbarOverlayService(
+            TaskbarStocks,
+            () => TaskbarSparklineWidth,
+            () => TaskbarTextBrush,
+            stock => TaskbarStockOpenRequested?.Invoke(stock),
+            () => TaskbarClockGap,
+            () => TaskbarVerticalOffset);
 
         RefreshVisibleStocks();
 
@@ -655,7 +776,11 @@ public class MainViewModel : INotifyPropertyChanged
             Groups = _config.Groups.Select(g => new WatchlistGroup { Id = g.Id, Name = g.Name }).ToList(),
             WatchlistGroupIds = _config.Watchlist.Select(e => e.GroupId).ToList(),
             SelectedGroupId = _config.SelectedGroupId,
-            TaskbarStocks = CloneTaskbarEntries(_config.TaskbarStocks)
+            TaskbarStocks = CloneTaskbarEntries(_config.TaskbarStocks),
+            TaskbarSparklineWidth = TaskbarSparklineWidth,
+            TaskbarClockGap = TaskbarClockGap,
+            TaskbarVerticalOffset = TaskbarVerticalOffset,
+            TaskbarTextGrayLevel = TaskbarTextGrayLevel
         };
     }
 
@@ -678,6 +803,10 @@ public class MainViewModel : INotifyPropertyChanged
             .Select(g => new WatchlistGroup { Id = g.Id, Name = g.Name })
             .ToList();
         _config.TaskbarStocks = CloneTaskbarEntries(snap.TaskbarStocks);
+        TaskbarSparklineWidth = snap.TaskbarSparklineWidth;
+        TaskbarClockGap = snap.TaskbarClockGap;
+        TaskbarVerticalOffset = snap.TaskbarVerticalOffset;
+        TaskbarTextGrayLevel = snap.TaskbarTextGrayLevel;
 
         int count = Math.Min(_config.Watchlist.Count, snap.WatchlistGroupIds.Count);
         for (int i = 0; i < count; i++)
@@ -722,6 +851,14 @@ public class MainViewModel : INotifyPropertyChanged
         OnPropertyChanged(nameof(CanCycleQuoteDataSource));
         OnPropertyChanged(nameof(CanReorder));
         OnPropertyChanged(nameof(HoldingAmountSortArrow));
+        OnPropertyChanged(nameof(TaskbarSparklineWidth));
+        OnPropertyChanged(nameof(TaskbarSparklineWidthText));
+        OnPropertyChanged(nameof(TaskbarClockGap));
+        OnPropertyChanged(nameof(TaskbarClockGapText));
+        OnPropertyChanged(nameof(TaskbarVerticalOffset));
+        OnPropertyChanged(nameof(TaskbarVerticalOffsetText));
+        OnPropertyChanged(nameof(TaskbarTextGrayLevel));
+        OnPropertyChanged(nameof(TaskbarTextBrush));
         _configStore.Save(_config);
         _taskbarOverlay.Refresh();
         _ = _quoteService.RefreshNowAsync();
@@ -734,6 +871,10 @@ public class MainViewModel : INotifyPropertyChanged
         public List<string> WatchlistGroupIds { get; init; } = [];
         public string SelectedGroupId { get; init; } = string.Empty;
         public List<TaskbarStockEntry> TaskbarStocks { get; init; } = [];
+        public double TaskbarSparklineWidth { get; init; } = 55;
+        public double TaskbarClockGap { get; init; } = 4;
+        public double TaskbarVerticalOffset { get; init; }
+        public int TaskbarTextGrayLevel { get; init; } = 1;
     }
 
     private static List<TaskbarStockEntry> CloneTaskbarEntries(IEnumerable<TaskbarStockEntry> source) =>
@@ -894,6 +1035,7 @@ public class MainViewModel : INotifyPropertyChanged
     private void OnQuotesUpdated()
     {
         EvaluateAlerts();
+        RefreshAlertItems();
         OnPropertyChanged(nameof(HoldingMarketValueText));
         OnPropertyChanged(nameof(HoldingProfitTotalText));
         OnPropertyChanged(nameof(HoldingTodayProfitText));
@@ -910,6 +1052,7 @@ public class MainViewModel : INotifyPropertyChanged
         _config.AlertRules.Add(new AlertRule { StockCode = stock.Code, Metric = metric, Direction = direction, Threshold = threshold });
         _configStore.Save(_config);
         OnPropertyChanged(nameof(AlertCount));
+        RebuildAlertItems();
     }
 
     public void RemoveAlert(AlertRule rule)
@@ -917,6 +1060,32 @@ public class MainViewModel : INotifyPropertyChanged
         _config.AlertRules.Remove(rule);
         _configStore.Save(_config);
         OnPropertyChanged(nameof(AlertCount));
+        RebuildAlertItems();
+    }
+
+    // 重建预警设置窗列表（窗口打开、增删规则后）
+    public void RebuildAlertItems()
+    {
+        AlertItems.Clear();
+        foreach (var rule in _config.AlertRules)
+        {
+            var stock = Stocks.FirstOrDefault(s => s.Code.Equals(rule.StockCode, StringComparison.OrdinalIgnoreCase));
+            AlertItems.Add(new AlertRuleViewItem(rule, stock, OnAlertEnabledChanged));
+        }
+    }
+
+    // 预警开关切换：落盘并刷新计数
+    private void OnAlertEnabledChanged(AlertRuleViewItem item)
+    {
+        _configStore.Save(_config);
+        OnPropertyChanged(nameof(AlertCount));
+    }
+
+    // 行情刷新后更新预警列表显示值
+    private void RefreshAlertItems()
+    {
+        foreach (var item in AlertItems)
+            item.Refresh();
     }
 
     private void EvaluateAlerts()
@@ -932,6 +1101,7 @@ public class MainViewModel : INotifyPropertyChanged
             rule.LastTriggeredDate = today;
             _configStore.Save(_config);
             AlertTriggered?.Invoke($"{stock.DisplayName} {rule.Description}，当前 {value:0.##}");
+            RefreshAlertItems();
         }
     }
 
@@ -1347,6 +1517,8 @@ public class MainViewModel : INotifyPropertyChanged
                 _config.Watchlist[cfgIndex].HoldingCost = item.Cost;
                 watchlistChanged = true;
             }
+            if (ClearStaleHoldingAlias(existing))
+                watchlistChanged = true;
             if (ClearOtherStockHoldings(existing))
                 watchlistChanged = true;
             synced++;
@@ -1523,6 +1695,32 @@ public class MainViewModel : INotifyPropertyChanged
         OnPropertyChanged(nameof(HoldingTodayProfitText));
         OnPropertyChanged(nameof(HoldingTodayProfitDetails));
         RefreshVisibleStocks();
+    }
+
+    // 上海金等旧简称写在自定义名上时，持仓仍显示旧名；清空后跟东财现名
+    private bool ClearStaleHoldingAlias(StockItem stock)
+    {
+        if (!Services.HoldingSyncAliases.IsStaleDisplayName(stock.Code, stock.CustomName))
+            return false;
+
+        stock.CustomName = "";
+        int cfgIndex = FindWatchlistIndex(stock);
+        if (cfgIndex >= 0)
+            _config.Watchlist[cfgIndex].CustomName = "";
+        return true;
+    }
+
+    private bool ClearStaleHoldingAliasesInConfig()
+    {
+        bool changed = false;
+        foreach (var entry in _config.Watchlist)
+        {
+            if (!Services.HoldingSyncAliases.IsStaleDisplayName(entry.Code, entry.CustomName))
+                continue;
+            entry.CustomName = "";
+            changed = true;
+        }
+        return changed;
     }
 
     // 清除同代码其它条目上的持仓，避免持仓页重复
@@ -1822,6 +2020,8 @@ public class MainViewModel : INotifyPropertyChanged
         _quoteService.UpdateInterval();
         _intradayService.SetInterval(TradingHours.GetIntradayInterval(trading));
     }
+
+    public void EnsureTaskbarOverlayVisible() => _taskbarOverlay.EnsureVisible();
 
     public void DisposeTaskbarOverlay() => _taskbarOverlay.Dispose();
 

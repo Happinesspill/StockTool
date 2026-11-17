@@ -1,5 +1,6 @@
-﻿using System.Windows;
+using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Controls.Primitives;
 using System.Windows.Data;
 using System.Windows.Input;
 using System.Windows.Media;
@@ -44,6 +45,19 @@ public partial class ManageGroupsWindow : Window
             : Visibility.Collapsed;
     }
 
+    private void BtnTaskbarGray_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is not FrameworkElement fe) return;
+        int level = fe.Tag switch
+        {
+            int i => i,
+            string s when int.TryParse(s, out int parsed) => parsed,
+            _ => 0
+        };
+        if (level >= 1)
+            _vm.SelectTaskbarTextGrayLevel(level);
+    }
+
     private void Window_MouseLeftButtonDown(object sender, MouseButtonEventArgs e)
     {
         if (e.ChangedButton != MouseButton.Left) return;
@@ -52,7 +66,19 @@ public partial class ManageGroupsWindow : Window
         if (FindAncestor<ListBox>(source) is ListBox list &&
             (list == GroupList || list == IndexCardList || list == TaskbarList))
             return;
+        if (FindAncestor<Thumb>(source) != null)
+            return;
         DragMove();
+    }
+
+    private void ResizeThumb_DragDelta(object sender, DragDeltaEventArgs e)
+    {
+        double nextW = Width + e.HorizontalChange;
+        double nextH = Height + e.VerticalChange;
+        if (nextW >= MinWidth)
+            Width = nextW;
+        if (nextH >= MinHeight)
+            Height = nextH;
     }
 
     private void BtnSave_Click(object sender, RoutedEventArgs e)
@@ -285,22 +311,75 @@ public partial class ManageGroupsWindow : Window
 
     private void GroupList_PreviewMouseLeftButtonDown(object sender, MouseButtonEventArgs e)
     {
-        // 点在重命名/删除按钮上时不启动拖拽
-        if (FindAncestor<Button>(e.OriginalSource as DependencyObject) != null)
-        {
-            _draggedGroup = null;
-            return;
-        }
-
         _dragStart = e.GetPosition(null);
         var group = FindGroupAtMouse(e);
-        // 自选、持仓固定，不可拖拽
+        // 自选、持仓固定，不可拖拽（管理页通常已过滤，仍做兜底）
         if (group != null && IsPinnedGroup(group))
         {
             _draggedGroup = null;
             return;
         }
         _draggedGroup = group;
+    }
+
+    private void MenuRenameGroup_Click(object sender, RoutedEventArgs e)
+    {
+        var group = ResolveGroupFromMenu(sender);
+        if (group == null) return;
+        RenameGroup(group);
+    }
+
+    private void MenuDeleteGroup_Click(object sender, RoutedEventArgs e)
+    {
+        var group = ResolveGroupFromMenu(sender);
+        if (group == null) return;
+        DeleteGroup(group);
+    }
+
+    private static WatchlistGroup? ResolveGroupFromMenu(object sender)
+    {
+        if (sender is not MenuItem mi) return null;
+        if (mi.DataContext is WatchlistGroup g) return g;
+        if (mi.Parent is ContextMenu cm && cm.PlacementTarget is FrameworkElement fe)
+            return fe.DataContext as WatchlistGroup;
+        return null;
+    }
+
+    private void RenameGroup(WatchlistGroup group)
+    {
+        if (group.Id == MainViewModel.HoldingGroupId)
+        {
+            MessageBox.Show(this, "「持仓」分组不可重命名", "提示", MessageBoxButton.OK, MessageBoxImage.Information);
+            return;
+        }
+        string? name = PromptText("重命名分组", group.Name);
+        if (name == null) return;
+        if (!_vm.RenameGroup(group.Id, name))
+            MessageBox.Show(this, "重命名失败（名称无效或已存在）", "提示", MessageBoxButton.OK, MessageBoxImage.Information);
+    }
+
+    private void DeleteGroup(WatchlistGroup group)
+    {
+        if (group.Id == MainViewModel.HoldingGroupId)
+        {
+            MessageBox.Show(this, "「持仓」分组不可删除", "提示", MessageBoxButton.OK, MessageBoxImage.Information);
+            return;
+        }
+        if (group.Name == MainViewModel.DefaultGroupName)
+        {
+            MessageBox.Show(this, "「自选」分组不可删除", "提示", MessageBoxButton.OK, MessageBoxImage.Information);
+            return;
+        }
+
+        var confirm = MessageBox.Show(this,
+            $"删除分组「{group.Name}」？其中的股票将移入「自选」。",
+            "确认删除",
+            MessageBoxButton.OKCancel,
+            MessageBoxImage.Question);
+        if (confirm != MessageBoxResult.OK) return;
+
+        if (!_vm.DeleteGroup(group.Id))
+            MessageBox.Show(this, "删除失败", "提示", MessageBoxButton.OK, MessageBoxImage.Information);
     }
 
     private void GroupList_PreviewMouseMove(object sender, MouseEventArgs e)
@@ -413,44 +492,6 @@ public partial class ManageGroupsWindow : Window
         e.Handled = true;
     }
 
-    private void BtnRename_Click(object sender, RoutedEventArgs e)
-    {
-        if (sender is not Button btn || btn.Tag is not WatchlistGroup group) return;
-        if (group.Id == MainViewModel.HoldingGroupId)
-        {
-            MessageBox.Show(this, "「持仓」分组不可重命名", "提示", MessageBoxButton.OK, MessageBoxImage.Information);
-            return;
-        }
-        string? name = PromptText("重命名分组", group.Name);
-        if (name == null) return;
-        if (!_vm.RenameGroup(group.Id, name))
-            MessageBox.Show(this, "重命名失败（名称无效或已存在）", "提示", MessageBoxButton.OK, MessageBoxImage.Information);
-    }
-
-    private void BtnDelete_Click(object sender, RoutedEventArgs e)
-    {
-        if (sender is not Button btn || btn.Tag is not WatchlistGroup group) return;
-        if (group.Id == MainViewModel.HoldingGroupId)
-        {
-            MessageBox.Show(this, "「持仓」分组不可删除", "提示", MessageBoxButton.OK, MessageBoxImage.Information);
-            return;
-        }
-        if (group.Name == MainViewModel.DefaultGroupName)
-        {
-            MessageBox.Show(this, "「自选」分组不可删除", "提示", MessageBoxButton.OK, MessageBoxImage.Information);
-            return;
-        }
-
-        var confirm = MessageBox.Show(this,
-            $"删除分组「{group.Name}」？其中的股票将移入「自选」。",
-            "确认删除",
-            MessageBoxButton.OKCancel,
-            MessageBoxImage.Question);
-        if (confirm != MessageBoxResult.OK) return;
-
-        if (!_vm.DeleteGroup(group.Id))
-            MessageBox.Show(this, "删除失败", "提示", MessageBoxButton.OK, MessageBoxImage.Information);
-    }
 
     private sealed class PickResult
     {

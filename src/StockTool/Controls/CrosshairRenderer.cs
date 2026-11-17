@@ -14,13 +14,31 @@ internal static class CrosshairRenderer
     public static void DrawCrossLines(DrawingContext dc, double x, double y, double left, double right,
         double top, double bottom)
     {
+        var pen = CrossPen();
+        dc.DrawLine(pen, new Point(x, top), new Point(x, bottom));
+        dc.DrawLine(pen, new Point(left, y), new Point(right, y));
+    }
+
+    /// <summary>竖直虚线：用于把悬停虚线同步到下方指标子图</summary>
+    public static void DrawVerticalLine(DrawingContext dc, double x, double top, double bottom)
+    {
+        dc.DrawLine(CrossPen(), new Point(x, top), new Point(x, bottom));
+    }
+
+    /// <summary>水平虚线：K 线主图悬停价格线</summary>
+    public static void DrawHorizontalLine(DrawingContext dc, double left, double right, double y)
+    {
+        dc.DrawLine(CrossPen(), new Point(left, y), new Point(right, y));
+    }
+
+    private static Pen CrossPen()
+    {
         var pen = new Pen(new SolidColorBrush(Color.FromArgb(170, 90, 90, 90)), 0.7)
         {
             DashStyle = new DashStyle([3, 3], 0)
         };
         pen.Freeze();
-        dc.DrawLine(pen, new Point(x, top), new Point(x, bottom));
-        dc.DrawLine(pen, new Point(left, y), new Point(right, y));
+        return pen;
     }
 
     /// <summary>光标点（白描边，避免与折线混在一起）</summary>

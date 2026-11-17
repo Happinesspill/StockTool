@@ -1,5 +1,6 @@
 ﻿using System.Net.Http.Json;
 using System.Text.Json;
+using StockTool.Core.Indicators;
 using StockTool.Core.Models;
 
 namespace StockTool.Data;
@@ -659,6 +660,91 @@ public class EastMoneyClient
         return await GetTencentMinuteKlineAsIntradayAsync(code);
     }
 
+    /// <summary>取上一交易日分时收盘价（最多 count 点），仅用于分时指标预热</summary>
+    public async Task<List<decimal>> GetIntradayWarmupAsync(string internalCode, int count = 80)
+    {
+        if (IsFundCode(internalCode) && !StockItem.IsExchangeFundCode(internalCode)) return [];
+        string code = StockItem.ToExchangeCode(internalCode);
+
+        string secid;
+        try
+        {
+            secid = ToSecId(code);
+        }
+        catch
+        {
+            return [];
+        }
+
+        // trends2 支持多日分时，ndays=2 即可拿到上一交易日
+        string path = "/api/qt/stock/trends2/get" +
+                      "?fields1=f1,f2,f3" +
+                      "&fields2=f51,f52,f53" +
+                      "&ut=fa5fd1943c7b386f172d6893dbfba10b" +
+                      $"&ndays=2&iscr=0&secid={Uri.EscapeDataString(secid)}";
+
+        foreach (var host in EastMoneyTrendHosts)
+        {
+            try
+            {
+                var prices = await FetchPrevTrendPricesAsync(host + path, code, count);
+                if (prices.Count > 0) return prices;
+            }
+            catch
+            {
+                // try next host
+            }
+        }
+
+        return [];
+    }
+
+    // 解析多日分时，只保留日期早于今天（上一交易日）的收盘价
+    private async Task<List<decimal>> FetchPrevTrendPricesAsync(string url, string internalCode, int count)
+    {
+        var prices = new List<decimal>();
+
+        using var req = new HttpRequestMessage(HttpMethod.Get, url);
+        req.Headers.TryAddWithoutValidation("Referer", "https://quote.eastmoney.com/");
+        using var resp = await _http.SendAsync(req);
+        if (!resp.IsSuccessStatusCode) return prices;
+
+        string json = await resp.Content.ReadAsStringAsync();
+        if (string.IsNullOrWhiteSpace(json) || json.TrimStart().StartsWith('<'))
+            return prices;
+
+        using var doc = JsonDocument.Parse(json);
+        if (!doc.RootElement.TryGetProperty("data", out var data) || data.ValueKind != JsonValueKind.Object)
+            return prices;
+        if (!data.TryGetProperty("trends", out var arr) || arr.ValueKind != JsonValueKind.Array)
+            return prices;
+
+        var today = DateTime.Today;
+        foreach (var item in arr.EnumerateArray())
+        {
+            string? line = item.ValueKind == JsonValueKind.String ? item.GetString() : null;
+            if (string.IsNullOrWhiteSpace(line)) continue;
+            var parts = line.Split(',');
+            if (parts.Length < 3) continue;
+            if (!TryParseDec(parts[2], out var price) || price <= 0) continue;
+
+            // "2026-11-02 09:30,..." → 只取上一交易日
+            string raw = parts[0].Trim();
+            int space = raw.LastIndexOf(' ');
+            if (space <= 0) continue;
+            if (!DateTime.TryParse(raw[..space], out var date)) continue;
+            if (date.Date >= today) continue;
+
+            string minute = ExtractTrendMinute(parts[0]);
+            if (!IsInTradingSession(internalCode, minute)) continue;
+
+            prices.Add(price);
+        }
+
+        if (prices.Count <= count) return prices;
+        return prices.Skip(prices.Count - count).ToList();
+    }
+
     private async Task<IntradaySeries?> GetTencentIntradayAsync(string internalCode)
     {
         // 注意：用 ifzq.gtimg.cn，不要用 web.ifzq.gtimg.cn（易被 WAF）
@@ -1258,6 +1344,17 @@ public class EastMoneyClient
             if (!StockItem.IsExchangeFundCode(internalCode)) return [];
             internalCode = StockItem.ToExchangeCode(internalCode);
         }
+
+        var bars = await GetTencentKlineAsync(internalCode, period, count);
+        // 腾讯分钟线不支持港股（返回 param error），改用东财兜底
+        if (bars.Count == 0 && period is 1 or 5 or 15 or 30 or 60)
+            bars = await GetEastMoneyKlineAsync(internalCode, period, count);
+
+        return bars;
+    }
+
+    private async Task<List<KlineItem>> GetTencentKlineAsync(string internalCode, int period, int count)
+    {
         // period: 1=m1, 5=m5, 15=m15, 30=m30, 60=m60, 101=day, 102=week
         string prefix = TencentPrefix(internalCode);
         string code = prefix + internalCode[2..];
@@ -1270,7 +1367,7 @@ public class EastMoneyClient
         }
         else
         {
-            string p = period == 101 ? "day" : "week";
+            string p = period switch { 101 => "day", 102 => "week", _ => "month" };
             url = $"https://web.ifzq.gtimg.cn/appstock/app/fqkline/get?param={code},{p},,,{count},qfq";
         }
 
@@ -1327,6 +1424,146 @@ public class EastMoneyClient
         {
             return [];
         }
+    }
+
+    /// <summary>取近 N 年已实施的分红（除权日 + 每股派息），供股息率策略使用</summary>
+    public async Task<List<DividendEvent>> GetDividendEventsAsync(string internalCode, int years = 3)
+    {
+        var list = new List<DividendEvent>();
+
+        // 分红接口为 A 股口径，港股/基金跳过
+        string code = StockItem.NumericPartOf(internalCode);
+        if (code.Length != 6) return list;
+
+        string url = "https://datacenter-web.eastmoney.com/api/data/v1/get" +
+                     "?reportName=RPT_SHAREBONUS_DET" +
+                     "&columns=SECURITY_CODE,EX_DIVIDEND_DATE,PRETAX_BONUS_RMB" +
+                     $"&filter=(SECURITY_CODE%3D%22{code}%22)" +
+                     "&sortColumns=EX_DIVIDEND_DATE&sortTypes=-1&pageSize=20&source=WEB&client=WEB";
+
+        try
+        {
+            using var req = new HttpRequestMessage(HttpMethod.Get, url);
+            req.Headers.TryAddWithoutValidation("Referer", "https://data.eastmoney.com/");
+            using var resp = await _http.SendAsync(req);
+            if (!resp.IsSuccessStatusCode) return list;
+
+            string json = await resp.Content.ReadAsStringAsync();
+            if (string.IsNullOrWhiteSpace(json) || json.TrimStart().StartsWith('<'))
+                return list;
+
+            using var doc = JsonDocument.Parse(json);
+            if (!doc.RootElement.TryGetProperty("result", out var result)
+                || result.ValueKind != JsonValueKind.Object)
+                return list;
+            if (!result.TryGetProperty("data", out var data) || data.ValueKind != JsonValueKind.Array)
+                return list;
+
+            var from = DateTime.Today.AddYears(-years);
+            foreach (var item in data.EnumerateArray())
+            {
+                if (item.ValueKind != JsonValueKind.Object) continue;
+                if (!item.TryGetProperty("EX_DIVIDEND_DATE", out var dateElem)
+                    || dateElem.ValueKind != JsonValueKind.String) continue;
+                if (!DateTime.TryParse(dateElem.GetString(), out var date)) continue;
+                if (date.Date < from) continue;
+
+                if (!item.TryGetProperty("PRETAX_BONUS_RMB", out var bonusElem)) continue;
+                decimal bonus;
+                if (bonusElem.ValueKind == JsonValueKind.Number)
+                {
+                    if (!bonusElem.TryGetDecimal(out bonus)) continue;
+                }
+                else if (bonusElem.ValueKind == JsonValueKind.String)
+                {
+                    if (!TryParseDec(bonusElem.GetString() ?? string.Empty, out bonus)) continue;
+                }
+                else continue;
+
+                if (bonus <= 0) continue;
+                // PRETAX_BONUS_RMB 为每 10 股派息（元）
+                list.Add(new DividendEvent { Date = date.Date, PerShare = bonus / 10m });
+            }
+        }
+        catch
+        {
+            return list;
+        }
+
+        return list;
+    }
+
+    // 东财 K 线兜底：腾讯不支持的标的（如港股分钟线）走这里
+    private async Task<List<KlineItem>> GetEastMoneyKlineAsync(string internalCode, int period, int count)
+    {
+        var bars = new List<KlineItem>();
+
+        string secid;
+        try
+        {
+            secid = ToSecId(internalCode);
+        }
+        catch
+        {
+            return bars;
+        }
+
+        // klt 与项目 period 编码一致：1/5/15/30/60/101/102
+        string url = "https://push2his.eastmoney.com/api/qt/stock/kline/get" +
+                     $"?secid={Uri.EscapeDataString(secid)}" +
+                     "&ut=fa5fd1943c7b386f172d6893dbfba10b" +
+                     $"&klt={period}&fqt=1&lmt={count}&end=20500101" +
+                     "&fields1=f1,f2,f3,f4,f5,f6" +
+                     "&fields2=f51,f52,f53,f54,f55,f56,f57";
+
+        try
+        {
+            using var req = new HttpRequestMessage(HttpMethod.Get, url);
+            req.Headers.TryAddWithoutValidation("Referer", "https://quote.eastmoney.com/");
+            using var resp = await _http.SendAsync(req);
+            if (!resp.IsSuccessStatusCode) return bars;
+
+            string json = await resp.Content.ReadAsStringAsync();
+            if (string.IsNullOrWhiteSpace(json) || json.TrimStart().StartsWith('<'))
+                return bars;
+
+            using var doc = JsonDocument.Parse(json);
+            if (!doc.RootElement.TryGetProperty("data", out var data) || data.ValueKind != JsonValueKind.Object)
+                return bars;
+            if (!data.TryGetProperty("klines", out var arr) || arr.ValueKind != JsonValueKind.Array)
+                return bars;
+
+            foreach (var item in arr.EnumerateArray())
+            {
+                // "2026-11-13 14:45,开,收,高,低,量,额"
+                string? line = item.ValueKind == JsonValueKind.String ? item.GetString() : null;
+                if (string.IsNullOrWhiteSpace(line)) continue;
+
+                var parts = line.Split(',');
+                if (parts.Length < 6) continue;
+                if (!DateTime.TryParse(parts[0], out var date)) continue;
+                if (!TryParseDec(parts[1], out var open) || !TryParseDec(parts[2], out var close)
+                    || !TryParseDec(parts[3], out var high) || !TryParseDec(parts[4], out var low)
+                    || !TryParseDec(parts[5], out var volume)) continue;
+                if (close <= 0) continue;
+
+                bars.Add(new KlineItem
+                {
+                    Date = date,
+                    Open = open,
+                    Close = close,
+                    High = high,
+                    Low = low,
+                    Volume = volume
+                });
+            }
+        }
+        catch
+        {
+            return bars;
+        }
+
+        return bars;
     }
 
     public void Dispose() => _http.Dispose();

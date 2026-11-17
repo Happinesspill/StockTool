@@ -3,6 +3,7 @@ using System.Windows.Controls;
 using System.Windows.Input;
 using System.Windows.Media;
 using System.Windows.Media.Animation;
+using StockTool.Core.Indicators;
 using StockTool.Core.Models;
 using StockTool.Data;
 using StockTool.Services;
@@ -14,6 +15,8 @@ public partial class StockDetailSheet : UserControl
 {
     private EastMoneyClient? _client;
     private MainViewModel? VM => DataContext as MainViewModel;
+    // 现价 → 图表末根同步（分时/各周期K线买卖点随现价重算）
+    private readonly System.Windows.Threading.DispatcherTimer _priceSyncTimer;
 
     /// <summary>遮罩按下/松手后通知主窗口短暂屏蔽列表点击穿透。</summary>
     public event Action<bool>? SuppressListInputChanged;
@@ -21,6 +24,13 @@ public partial class StockDetailSheet : UserControl
     public StockDetailSheet()
     {
         InitializeComponent();
+
+        _priceSyncTimer = new System.Windows.Threading.DispatcherTimer
+        {
+            Interval = TimeSpan.FromSeconds(1)
+        };
+        _priceSyncTimer.Tick += OnPriceSyncTick;
+        _priceSyncTimer.Start();
     }
 
     public void Initialize(EastMoneyClient client)
@@ -167,12 +177,61 @@ public partial class StockDetailSheet : UserControl
         }
     }
 
+    // 每秒用现价刷新末根（分时/各周期K线），买卖点随之重算重绘
+    private void OnPriceSyncTick(object? sender, EventArgs e)
+    {
+        if (VM?.SelectedStock is not { } stock) return;
+
+        decimal price = stock.CurrentPrice;
+        if (price <= 0) return;
+
+        if (stock.KlinePeriod == 0)
+        {
+            // 分时：现价接到最后一个点
+            if (stock.IntradayPoints.Count > 0)
+                IntradayChart.SyncLastPrice(price);
+            return;
+        }
+
+        if (stock.KlineData.Count == 0) return;
+
+        // K线：刷新正在形成的那根，控件内部重算指标与 MACD+KDJ 买卖点
+        decimal before = stock.KlineData[^1].Close;
+        KlineChart.SyncLastBar(price);
+        if (stock.KlineData[^1].Close == before) return;
+
+        // 日线：红利策略同样按新收盘价重算（周/月/分红用缓存，不再发请求）
+        if (stock.KlinePeriod == 101
+            && stock.StrategyWeekly.Count > 0
+            && stock.StrategyMonthly.Count > 0)
+        {
+            var result = DividendBollStrategy.Evaluate(
+                stock.KlineData, stock.StrategyWeekly, stock.StrategyMonthly, stock.StrategyDividends);
+            stock.StrategySignals = result.Signals;
+            stock.StrategySummary = result.Summary;
+        }
+    }
+
     private async Task LoadIntradayAsync(StockItem stock)
     {
         if (_client == null) return;
         try
         {
+            // 预热数据与当日分时并行拉取；预热只用于指标对齐，失败不影响主图
+            var warmupTask = stock.IntradayWarmupPoints.Count > 0
+                ? Task.FromResult(stock.IntradayWarmupPoints)
+                : _client.GetIntradayWarmupAsync(stock.Code);
+
             var series = await _client.GetIntradayAsync(stock.Code);
+
+            // 先落预热再落当日点，避免先画出无预热的半成品
+            try
+            {
+                var warmup = await warmupTask;
+                if (warmup.Count > 0) stock.IntradayWarmupPoints = warmup;
+            }
+            catch { }
+
             if (series != null && series.Prices.Count > 0)
             {
                 stock.IntradayPoints = series.Prices;
@@ -188,11 +247,47 @@ public partial class StockDetailSheet : UserControl
         if (_client == null) return;
         try
         {
-            var data = await _client.GetKlineAsync(stock.Code, stock.KlinePeriod);
+            // 1 分钟线取当日整段（约 240~330 根），其余周期用默认根数
+            int count = stock.KlinePeriod == 1 ? 300 : 160;
+            var data = await _client.GetKlineAsync(stock.Code, stock.KlinePeriod, count);
             if (data.Count > 0)
                 stock.KlineData = data;
+
+            // 红利策略基于日/周/月 BOLL，只在日线视图计算
+            if (stock.KlinePeriod == 101 && data.Count > 0)
+                await LoadDividendStrategyAsync(stock, data);
         }
         catch { }
+    }
+
+    // 拉周线/月线/分红，算多周期 BOLL 共振买卖点
+    private async Task LoadDividendStrategyAsync(StockItem stock, List<KlineItem> daily)
+    {
+        if (_client == null) return;
+        try
+        {
+            var weeklyTask = _client.GetKlineAsync(stock.Code, 102, 160);
+            var monthlyTask = _client.GetKlineAsync(stock.Code, 103, 80);
+            var dividendTask = _client.GetDividendEventsAsync(stock.Code);
+
+            var weekly = await weeklyTask;
+            var monthly = await monthlyTask;
+            var dividends = await dividendTask;
+
+            // 缓存周/月/分红，供盘中按现价重算策略
+            stock.StrategyWeekly = weekly;
+            stock.StrategyMonthly = monthly;
+            stock.StrategyDividends = dividends;
+
+            var result = DividendBollStrategy.Evaluate(daily, weekly, monthly, dividends);
+            stock.StrategySignals = result.Signals;
+            stock.StrategySummary = result.Summary;
+        }
+        catch
+        {
+            stock.StrategySignals = [];
+            stock.StrategySummary = string.Empty;
+        }
     }
 
     private async void KlinePeriod_Click(object sender, RoutedEventArgs e)
@@ -209,11 +304,20 @@ public partial class StockDetailSheet : UserControl
 
         if (period == 0)
         {
+            // 分时视图不显示红利策略标记
+            stock.StrategySignals = [];
+            stock.StrategySummary = string.Empty;
             await LoadIntradayAsync(stock);
             return;
         }
 
         stock.KlineData = [];
+        // 策略标记只对日线有意义，切到分钟/周线时清空避免错位
+        if (period != 101)
+        {
+            stock.StrategySignals = [];
+            stock.StrategySummary = string.Empty;
+        }
         await LoadKlineAsync(stock);
     }
 

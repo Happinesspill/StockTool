@@ -32,6 +32,7 @@ public partial class MainWindow : Window
     private AddStockDialog? _addStockDialog;
     private SettingsWindow? _settingsWindow;
     private ManageGroupsWindow? _manageGroupsWindow;
+    private AlertWindow? _alertWindow;
 
     public event Action<string>? SettingsChanged;
 
@@ -43,6 +44,8 @@ public partial class MainWindow : Window
         ApplyAppIcon();
         DetailSheet.Initialize(_client);
         DetailSheet.SuppressListInputChanged += OnDetailSheetSuppressListInput;
+        VM.TaskbarStockOpenRequested += stock => Dispatcher.Invoke(() => OpenStockFromTaskbar(stock));
+        Activated += (_, _) => VM.EnsureTaskbarOverlayVisible();
         Loaded += (_, _) => SyncHeaderPadding();
 
         // restore saved position
@@ -50,6 +53,65 @@ public partial class MainWindow : Window
         {
             Left = VM.WindowLeft;
             Top = VM.WindowTop;
+        }
+    }
+
+    /// <summary>任务栏双击：显示主窗、切到对应分组并定位该股票。</summary>
+    private async void OpenStockFromTaskbar(StockItem stock)
+    {
+        StockTool.Services.TaskbarDiagLog.Info(
+            $"OpenStockFromTaskbar begin code={stock.Code} group={stock.GroupId} " +
+            $"mainVis={Visibility} state={WindowState} topmost={Topmost} taskbarItems={VM.TaskbarStocks.Count}");
+        try
+        {
+            Show();
+            WindowState = WindowState.Normal;
+            Activate();
+            // 主窗置顶后叠层会被压到任务栏下，立刻再顶一次
+            VM.EnsureTaskbarOverlayVisible();
+
+            if (!string.IsNullOrEmpty(stock.GroupId))
+                VM.SelectGroup(stock.GroupId);
+
+            var target = VM.VisibleStocks.FirstOrDefault(s =>
+                string.Equals(s.Code, stock.Code, StringComparison.OrdinalIgnoreCase));
+
+            if (target == null && stock.HasHolding)
+            {
+                VM.SelectGroup(MainViewModel.HoldingGroupId);
+                target = VM.VisibleStocks.FirstOrDefault(s =>
+                    string.Equals(s.Code, stock.Code, StringComparison.OrdinalIgnoreCase));
+            }
+
+            target ??= VM.Stocks.FirstOrDefault(s =>
+                string.Equals(s.Code, stock.Code, StringComparison.OrdinalIgnoreCase)) ?? stock;
+
+            StockTool.Services.TaskbarDiagLog.Info(
+                $"OpenStockFromTaskbar target={target.Code} visibleIdx={VM.VisibleStocks.IndexOf(target)} " +
+                $"selGroup={VM.SelectedGroupId}");
+
+            await Dispatcher.InvokeAsync(() =>
+            {
+                StockList.UpdateLayout();
+                if (StockList.ItemContainerGenerator.ContainerFromItem(target) is FrameworkElement row)
+                    row.BringIntoView();
+                else
+                {
+                    int index = VM.VisibleStocks.IndexOf(target);
+                    if (index >= 0)
+                        ListScroll.ScrollToVerticalOffset(Math.Max(0, index * 52 - ListScroll.ViewportHeight / 3));
+                }
+            }, System.Windows.Threading.DispatcherPriority.Loaded);
+
+            VM.SelectedStock = target;
+            await DetailSheet.ShowAsync(target);
+            VM.EnsureTaskbarOverlayVisible();
+            StockTool.Services.TaskbarDiagLog.Info(
+                $"OpenStockFromTaskbar end taskbarItems={VM.TaskbarStocks.Count}");
+        }
+        catch (Exception ex)
+        {
+            StockTool.Services.TaskbarDiagLog.Error("OpenStockFromTaskbar failed", ex);
         }
     }
 
@@ -79,7 +141,16 @@ public partial class MainWindow : Window
             return;
         }
 
-        var dialog = new AddStockDialog(_client, VM.IsFundGroup, VM.GetHoldingVisionOptions, OpenSettings)
+        var isFundDialog = VM.IsFundGroup;
+        var dialog = new AddStockDialog(_client, isFundDialog, VM.GetHoldingVisionOptions, OpenSettings,
+            // 识别队列未清空时的即时同步：只写主窗持仓，对话框保持打开继续识别
+            items =>
+            {
+                if (isFundDialog)
+                    VM.SyncFundHoldingsFromImport(items);
+                else
+                    VM.SyncHoldingsFromImport(items);
+            })
         {
             // Owner 保证压在主窗之上（主窗 Topmost 时也生效）；自身不设 Topmost
             Owner = this,
@@ -131,8 +202,27 @@ public partial class MainWindow : Window
 
     private void BtnAlertSettings_Click(object sender, RoutedEventArgs e)
     {
-        MessageBox.Show("请在股票行右键选择“设置预警”，可设置价格或涨跌幅上穿/下破提醒。\n\n当前已启用预警：" + VM.AlertCount,
-            "预警设置", MessageBoxButton.OK, MessageBoxImage.Information);
+        // 旧实现：仅弹提示（保留备查）
+        //MessageBox.Show("请在股票行右键选择“设置预警”，可设置价格或涨跌幅上穿/下破提醒。\n\n当前已启用预警：" + VM.AlertCount,
+        //    "预警设置", MessageBoxButton.OK, MessageBoxImage.Information);
+
+        if (_alertWindow != null)
+        {
+            BringSecondaryToFront(_alertWindow);
+            return;
+        }
+
+        var dlg = new AlertWindow(VM)
+        {
+            Owner = this,
+            WindowStartupLocation = WindowStartupLocation.CenterOwner,
+            ShowInTaskbar = false,
+            Topmost = false
+        };
+        dlg.Closed += (_, _) => _alertWindow = null;
+        _alertWindow = dlg;
+        dlg.Show();
+        BringSecondaryToFront(dlg);
     }
 
     public void OpenSettings()
@@ -205,6 +295,12 @@ public partial class MainWindow : Window
     private void BtnClose_Click(object sender, RoutedEventArgs e)
     {
         Hide();
+    }
+
+    // 标题栏退出：完全退出程序（与托盘"退出程序"一致）
+    private void BtnExit_Click(object sender, RoutedEventArgs e)
+    {
+        (Application.Current as App)?.ExitApplication();
     }
 
     // 托盘退出时真正关闭窗口

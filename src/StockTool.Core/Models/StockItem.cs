@@ -1,5 +1,6 @@
 ﻿using System.ComponentModel;
 using System.Runtime.CompilerServices;
+using StockTool.Core.Indicators;
 
 namespace StockTool.Core.Models;
 
@@ -31,8 +32,11 @@ public class StockItem : INotifyPropertyChanged
     private List<decimal> _intradayPoints = [];
     private List<decimal> _intradayAvgPoints = [];
     private List<string> _intradayTimes = [];
+    private List<decimal> _intradayWarmupPoints = [];
     private List<KlineItem> _klineData = [];
-    /// <summary>0=分时（当日走势），其余为东财 klt：5/15/30/60/101/102</summary>
+    private List<IndicatorCalculator.TradeSignal> _strategySignals = [];
+    private string _strategySummary = string.Empty;
+    /// <summary>0=分时（当日走势），其余为东财 klt：1/5/15/30/60/101/102</summary>
     private int _klinePeriod = 0;
     private string _fundNavRange = "3m";
     private List<FundNavChartPoint> _fundNavChart = [];
@@ -468,11 +472,41 @@ public class StockItem : INotifyPropertyChanged
         set { _intradayTimes = value; OnPropertyChanged(); }
     }
 
+    /// <summary>上一交易日分钟收盘价，仅供分时指标预热，不参与绘制</summary>
+    public List<decimal> IntradayWarmupPoints
+    {
+        get => _intradayWarmupPoints;
+        set { _intradayWarmupPoints = value; OnPropertyChanged(); }
+    }
+
     public List<KlineItem> KlineData
     {
         get => _klineData;
         set { _klineData = value; OnPropertyChanged(); }
     }
+
+    /// <summary>红利策略（日/周/月 BOLL 共振）买卖点，仅日线视图使用</summary>
+    public List<IndicatorCalculator.TradeSignal> StrategySignals
+    {
+        get => _strategySignals;
+        set { _strategySignals = value; OnPropertyChanged(); }
+    }
+
+    /// <summary>红利策略摘要：股息率 / 减仓价 / 是否满足买点</summary>
+    public string StrategySummary
+    {
+        get => _strategySummary;
+        set { _strategySummary = value; OnPropertyChanged(); }
+    }
+
+    /// <summary>周线缓存，红利策略盘中重算时复用</summary>
+    public List<KlineItem> StrategyWeekly { get; set; } = [];
+
+    /// <summary>月线缓存，红利策略盘中重算时复用</summary>
+    public List<KlineItem> StrategyMonthly { get; set; } = [];
+
+    /// <summary>分红缓存，红利策略盘中重算时复用</summary>
+    public List<DividendEvent> StrategyDividends { get; set; } = [];
 
     public int KlinePeriod
     {

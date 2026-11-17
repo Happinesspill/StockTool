@@ -13,6 +13,14 @@ public class AppConfig
     public List<string> HomeIndexCodes { get; set; } = [];
     /// <summary>电脑任务栏展示的股票（按顺序；Screen 为 1/2）。</summary>
     public List<TaskbarStockEntry> TaskbarStocks { get; set; } = [];
+    /// <summary>任务栏分时图宽度（DIP），默认 55。</summary>
+    public double TaskbarSparklineWidth { get; set; } = 55;
+    /// <summary>任务栏叠层与系统时钟的间距（DIP），默认 4。</summary>
+    public double TaskbarClockGap { get; set; } = 4;
+    /// <summary>任务栏叠层上下偏移（DIP），正数下移，默认 0。</summary>
+    public double TaskbarVerticalOffset { get; set; }
+    /// <summary>任务栏名称/价格灰色色阶 1–4（1 最浅，4 最深）。</summary>
+    public int TaskbarTextGrayLevel { get; set; } = 1;
     public string SelectedGroupId { get; set; } = string.Empty;
     /// <summary>旧字段：default | change。保留用于迁移。</summary>
     public string SortMode { get; set; } = "default";

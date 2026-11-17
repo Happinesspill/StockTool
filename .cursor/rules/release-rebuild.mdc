@@ -1,0 +1,34 @@
+---
+description: Rebuild must stop Release StockTool then auto-start after build
+alwaysApply: true
+---
+
+# Release 重建约定
+
+本项目验证改动时，**重新生成前先关闭正在运行的 Release，生成后自动启动**。
+
+## 推荐做法
+
+优先用 Release 编译（csproj 已内置 Kill/Start）：
+
+```powershell
+dotnet build "d:\Demo\StockTool\StockTool.sln" -c Release
+```
+
+`StockTool.csproj` 在 Release 下会：
+1. 编译前结束 `bin\Release\StockTool.exe`
+2. 编译成功后自动启动该 exe
+
+## 手动时
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File "d:\Demo\StockTool\scripts\Restart-Release.ps1" -Action Kill
+dotnet build "d:\Demo\StockTool\StockTool.sln" -c Release /p:RestartRelease=false
+powershell -NoProfile -ExecutionPolicy Bypass -File "d:\Demo\StockTool\scripts\Restart-Release.ps1" -Action Start
+```
+
+## 注意
+
+- 不要只编 Debug 就当作用户可见结果；任务栏等 UI 改动用 Release 验证
+- 若文件被锁（MSB3026），先 Kill 再编
+- 可用 `/p:RestartRelease=false` 临时关闭自动启停

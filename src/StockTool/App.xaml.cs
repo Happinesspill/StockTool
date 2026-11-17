@@ -287,6 +287,12 @@ public partial class App : System.Windows.Application
         _mainWindow.Focus();
     }
 
+    // 主窗标题栏退出按钮调用：走完整退出流程
+    public void ExitApplication()
+    {
+        ShutdownApp();
+    }
+
     private void ShutdownApp()
     {
         _exitWatchCts?.Cancel();

@@ -19,6 +19,7 @@ public partial class AddStockDialog : Window
     private readonly bool _searchFunds;
     private readonly Func<HoldingVisionOptions?>? _getVisionOptions;
     private readonly Action? _openSettings;
+    private readonly Action<IReadOnlyList<HoldingImportItem>>? _syncHoldingsNow;
     private CancellationTokenSource? _searchCts;
     private CancellationTokenSource? _recognizeCts;
     private List<SearchResultItem> _results = [];
@@ -38,13 +39,15 @@ public partial class AddStockDialog : Window
         EastMoneyClient client,
         bool searchFunds = false,
         Func<HoldingVisionOptions?>? getVisionOptions = null,
-        Action? openSettings = null)
+        Action? openSettings = null,
+        Action<IReadOnlyList<HoldingImportItem>>? syncHoldingsNow = null)
     {
         InitializeComponent();
         _client = client;
         _searchFunds = searchFunds;
         _getVisionOptions = getVisionOptions;
         _openSettings = openSettings;
+        _syncHoldingsNow = syncHoldingsNow;
         Closed += (_, _) => CancelRecognizeQueue();
         if (_searchFunds)
         {
@@ -190,10 +193,27 @@ public partial class AddStockDialog : Window
 
         if (selected.Count == 0)
         {
+            // 队列仍在识别时，已同步的行已移出列表，提示等待而非"未勾选"
+            if (HasPendingRecognition())
+            {
+                MessageBox.Show(this,
+                    "还有截图正在识别，请稍候；识别出的持仓会继续加入列表",
+                    "提示",
+                    MessageBoxButton.OK, MessageBoxImage.Information);
+                return;
+            }
+
             MessageBox.Show(this,
                 _searchFunds ? "请至少勾选一只已匹配的基金" : "请至少勾选一只已匹配的股票",
                 "提示",
                 MessageBoxButton.OK, MessageBoxImage.Information);
+            return;
+        }
+
+        // 队列里还有待识别截图：先同步已勾选项并保留窗口，剩余识别完可再同步
+        if (HasPendingRecognition() && _syncHoldingsNow is not null)
+        {
+            SyncSelectedHoldings(selected);
             return;
         }
 
@@ -202,6 +222,35 @@ public partial class AddStockDialog : Window
         ImportedHoldings = selected;
         Confirmed = true;
         Close();
+    }
+
+    // 识别队列是否还有待识别（含正在识别的那一张）
+    private bool HasPendingRecognition()
+        => _recognizeQueue.Count > 0 || _recognizeLoopRunning;
+
+    // 立即同步已勾选项且不关闭页面；已写入的行从列表移除避免重复
+    private void SyncSelectedHoldings(IReadOnlyList<HoldingImportItem> selected)
+    {
+        try
+        {
+            _syncHoldingsNow?.Invoke(selected);
+        }
+        catch (Exception ex)
+        {
+            MessageBox.Show(this, ex.Message, "同步失败",
+                MessageBoxButton.OK, MessageBoxImage.Warning);
+            return;
+        }
+
+        // 数量或成本无效的行不会被写入，保留在列表里
+        foreach (var item in _importItems
+                     .Where(i => i.IsSelected && i.CanMatch && i.Shares > 0 && i.Cost > 0)
+                     .ToList())
+        {
+            _importItems.Remove(item);
+        }
+
+        UpdateQueueStatus();
     }
 
     private void BtnCancel_Click(object sender, RoutedEventArgs e)
@@ -445,6 +494,17 @@ public partial class AddStockDialog : Window
             if (_searchFunds)
             {
                 await MatchFundItemAsync(item);
+                continue;
+            }
+
+            if (HoldingSyncAliases.TryResolve(item.Name, out string aliasCode, out string aliasName))
+            {
+                item.InternalCode = aliasCode;
+                item.Code = aliasCode.Length > 2 ? aliasCode[2..] : aliasCode;
+                item.MatchedName = aliasName;
+                item.Market = "基金";
+                item.Status = "已匹配";
+                item.IsSelected = true;
                 continue;
             }
 

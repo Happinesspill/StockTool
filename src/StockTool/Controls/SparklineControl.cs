@@ -1,4 +1,4 @@
-﻿using System.Windows;
+using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
 using System.Windows.Media;
@@ -9,12 +9,20 @@ namespace StockTool.Controls;
 
 public class SparklineControl : Control
 {
-    private const double BaseHeight = 180;
+    private const double BaseHeight = 196;
     private const double SubPaneHeight = 78;
+    /// <summary>详情分时顶部图例（均价/最新）占用高度，避免折线高点压住文字</summary>
+    private const double LegendHeight = 16;
+    /// <summary>买卖点摘要行高度</summary>
+    private const double SignalRowHeight = 13;
+    /// <summary>买卖点标记与价格线的垂直间距</summary>
+    private const double TradeMarkGap = 22;
 
     // 悬停十字光标状态：索引 + 最近一次渲染的坐标映射
     private int _hoverIndex = -1;
     private HoverLayout _layout;
+    // 滚轮缩放后的显示点数；0 表示显示全部
+    private int _zoomCount;
 
     public static readonly DependencyProperty PointsProperty =
         DependencyProperty.Register(nameof(Points), typeof(List<decimal>), typeof(SparklineControl),
@@ -26,6 +34,10 @@ public class SparklineControl : Control
 
     public static readonly DependencyProperty TimesProperty =
         DependencyProperty.Register(nameof(Times), typeof(List<string>), typeof(SparklineControl),
+            new FrameworkPropertyMetadata(null, FrameworkPropertyMetadataOptions.AffectsRender, OnSeriesChanged));
+
+    public static readonly DependencyProperty WarmupPointsProperty =
+        DependencyProperty.Register(nameof(WarmupPoints), typeof(List<decimal>), typeof(SparklineControl),
             new FrameworkPropertyMetadata(null, FrameworkPropertyMetadataOptions.AffectsRender, OnSeriesChanged));
 
     public static readonly DependencyProperty BaseLineProperty =
@@ -71,6 +83,27 @@ public class SparklineControl : Control
     {
         get => (List<string>?)GetValue(TimesProperty);
         set => SetValue(TimesProperty, value);
+    }
+
+    /// <summary>上一交易日分钟价，仅用于指标预热，让子图从当日第一个点就有值</summary>
+    public List<decimal>? WarmupPoints
+    {
+        get => (List<decimal>?)GetValue(WarmupPointsProperty);
+        set => SetValue(WarmupPointsProperty, value);
+    }
+
+    /// <summary>
+    /// 盘中用现价刷新最后一个分时点，触发买卖点重算重绘。
+    /// 直接 InvalidateVisual，不重置悬停索引，避免十字光标闪烁。
+    /// </summary>
+    public void SyncLastPrice(decimal price)
+    {
+        var points = Points;
+        if (points == null || points.Count == 0 || price <= 0) return;
+        if (points[^1] == price) return;
+
+        points[^1] = price;
+        InvalidateVisual();
     }
 
     public decimal BaseLine
@@ -182,8 +215,8 @@ public class SparklineControl : Control
     {
         base.OnRender(dc);
 
-        var points = Points;
-        if (points == null || points.Count < 2) return;
+        var allPoints = Points;
+        if (allPoints == null || allPoints.Count < 2) return;
 
         double w = ActualWidth;
         double h = ActualHeight;
@@ -194,36 +227,138 @@ public class SparklineControl : Control
         double subTotal = subCount * SubPaneHeight;
         double mainH = Math.Max(40, h - subTotal);
 
-        DrawPricePane(dc, points, w, mainH, showLabels);
+        // 滚轮缩放：只显示最近 visibleCount 个点，未缩放时保持原有右侧留白
+        int total = allPoints.Count;
+        int visibleCount = _zoomCount <= 0 ? total : Math.Min(Math.Max(_zoomCount, MinZoomPoints), total);
+        int viewStart = total - visibleCount;
+        bool zoomed = visibleCount < total;
+
+        var points = zoomed ? allPoints.GetRange(viewStart, visibleCount) : allPoints;
+        var avgPoints = SliceWindow(AvgPoints, viewStart, visibleCount);
+        var times = SliceWindow(Times, viewStart, visibleCount);
+        // 主图与子图共用槽位数，缩放时不再保留盘中留白
+        int slots = zoomed ? visibleCount : ResolveSlotCount(total);
+
+        // 详情分时：用分钟数据构造伪K线，按 MACD+KDJ 共振判定当日买卖点
+        // 预热：拼接上一交易日分钟价，让 MACD/KDJ/RSI 从当日第一个点起就有值
+        List<KlineItem>? bars = null;
+        List<IndicatorCalculator.TradeSignal>? signals = null;
+        int warmupCount = 0;
+        if (showLabels)
+        {
+            var source = allPoints;
+            if (WarmupPoints is { Count: > 0 } warmup)
+            {
+                var merged = new List<decimal>(warmup.Count + allPoints.Count);
+                merged.AddRange(warmup);
+                merged.AddRange(allPoints);
+                source = merged;
+                warmupCount = warmup.Count;
+            }
+
+            bars = ToPseudoKlines(source);
+            signals = IndicatorCalculator.MacdKdjSignals(bars);
+            if (warmupCount > 0)
+                signals = ShiftSignals(signals, warmupCount, total);
+            if (zoomed)
+                signals = ShiftSignals(signals, viewStart, visibleCount);
+        }
+
+        DrawPricePane(dc, points, avgPoints, times, w, mainH, showLabels, signals, slots);
 
         if (subCount <= 0) return;
 
-        // 用滚动高低价构造伪 K 线，供 KDJ 等指标计算
-        var bars = ToPseudoKlines(points);
-        var macd = IndicatorCalculator.Macd(bars);
-        var kdj = IndicatorCalculator.Kdj(bars);
-        var rsi = IndicatorCalculator.Rsi(bars);
+        // 复用上面已构造的伪 K 线，供 KDJ 等指标计算
+        var kbars = bars ?? ToPseudoKlines(allPoints);
+        var macd = IndicatorCalculator.Macd(kbars);
+        var kdj = IndicatorCalculator.Kdj(kbars);
+        var rsi = IndicatorCalculator.Rsi(kbars);
 
-        int n = points.Count;
-        int startIdx = 0;
-        int slots = ResolveSlotCount(n);
-        double spacing = (w - 16) / (slots + 0.5);
+        int n = visibleCount;
+        // 子图只画窗口内部分，索引跳过预热段与缩放窗口
+        int startIdx = warmupCount + viewStart;
+        // 子图沿用主图时间轴（左侧标签留白 + 同一步长），保证数据点与悬停竖线垂直对齐
+        double axisLeft = PriceAxisLeftPad;
+        double axisStep = Math.Max(1, w - PriceAxisLeftPad) / Math.Max(1, slots - 1);
 
         double y = mainH;
         if (subCount >= 1)
         {
-            DrawMacdPane(dc, startIdx, n, w, y, SubPaneHeight, spacing, macd);
+            DrawMacdPane(dc, startIdx, n, w, y, SubPaneHeight, axisLeft, axisStep, macd);
             y += SubPaneHeight;
         }
         if (subCount >= 2)
         {
-            DrawKdjPane(dc, startIdx, n, w, y, SubPaneHeight, spacing, kdj);
+            DrawKdjPane(dc, startIdx, n, w, y, SubPaneHeight, axisLeft, axisStep, kdj);
             y += SubPaneHeight;
         }
         if (subCount >= 3)
         {
-            DrawRsiPane(dc, startIdx, n, w, y, SubPaneHeight, spacing, rsi);
+            DrawRsiPane(dc, startIdx, n, w, y, SubPaneHeight, axisLeft, axisStep, rsi);
         }
+
+        // 悬停竖虚线同步延伸到下方指标子图
+        if (_hoverIndex >= 0 && _hoverIndex < n)
+        {
+            double hoverX = axisLeft + _hoverIndex * axisStep;
+            CrosshairRenderer.DrawVerticalLine(dc, hoverX, mainH, mainH + subCount * SubPaneHeight);
+        }
+    }
+
+    /// <summary>主图左侧价格标签留白宽度</summary>
+    private const double PriceAxisLeftPad = 42;
+    /// <summary>滚轮放大后最少显示的点数</summary>
+    private const int MinZoomPoints = 20;
+
+    // 丢弃窗口外信号，索引改为窗口相对位置
+    private static List<IndicatorCalculator.TradeSignal> ShiftSignals(
+        List<IndicatorCalculator.TradeSignal> signals, int offset, int count)
+    {
+        var result = new List<IndicatorCalculator.TradeSignal>();
+        foreach (var sig in signals)
+        {
+            if (sig.Index < offset || sig.Index >= offset + count) continue;
+            result.Add(new IndicatorCalculator.TradeSignal
+            {
+                Index = sig.Index - offset,
+                IsBuy = sig.IsBuy,
+                Reason = sig.Reason
+            });
+        }
+        return result;
+    }
+
+    // 按窗口截取序列；整段可见时直接返回原引用
+    private static List<T>? SliceWindow<T>(List<T>? source, int start, int count)
+    {
+        if (source == null || source.Count == 0) return source;
+        if (start == 0 && count >= source.Count) return source;
+        if (start >= source.Count) return null;
+
+        return source.GetRange(start, Math.Min(count, source.Count - start));
+    }
+
+    /// <summary>滚轮缩放分时显示范围：上滚放大，下滚缩小</summary>
+    protected override void OnMouseWheel(MouseWheelEventArgs e)
+    {
+        base.OnMouseWheel(e);
+
+        // 列表/任务栏小图不参与缩放
+        if (!ShowLabels) return;
+        var all = Points;
+        if (all == null || all.Count <= MinZoomPoints) return;
+
+        int total = all.Count;
+        int current = _zoomCount <= 0 || _zoomCount > total ? total : _zoomCount;
+        int next = e.Delta > 0
+            ? (int)Math.Round(current * 0.8)
+            : (int)Math.Round(current * 1.25);
+        next = Math.Clamp(next, MinZoomPoints, total);
+
+        e.Handled = true;
+        _zoomCount = next >= total ? 0 : next;
+        _hoverIndex = -1;
+        InvalidateVisual();
     }
 
     private int ResolveSlotCount(int pointCount)
@@ -234,14 +369,16 @@ public class SparklineControl : Control
         return Math.Max(pointCount, 2);
     }
 
-    private void DrawPricePane(DrawingContext dc, List<decimal> points, double w, double mainH, bool showLabels)
+    private void DrawPricePane(DrawingContext dc, List<decimal> points, List<decimal>? avgPoints,
+        List<string>? times, double w, double mainH, bool showLabels,
+        List<IndicatorCalculator.TradeSignal>? signals, int slots)
     {
-        var avgPoints = AvgPoints;
         bool drawAvg = showLabels && avgPoints != null && avgPoints.Count >= 2;
 
-        double leftPad = showLabels ? 42 : 0;
-        double topPad = showLabels ? 4 : 0;
-        double bottomPad = showLabels ? 4 : 0;
+        double leftPad = showLabels ? PriceAxisLeftPad : 0;
+        // 列表/任务栏小图留 2px 上下边；详情图为图例与买卖点摘要预留顶部空间
+        double topPad = showLabels ? LegendHeight + SignalRowHeight + 4 : 2;
+        double bottomPad = showLabels ? 4 : 2;
         double chartW = Math.Max(1, w - leftPad);
         double chartH = Math.Max(1, mainH - topPad - bottomPad);
 
@@ -277,12 +414,12 @@ public class SparklineControl : Control
             DrawLabel(dc, max.ToString("F2"), 2, topPad, labelBrush);
             DrawLabel(dc, min.ToString("F2"), 2, topPad + chartH - 12, labelBrush);
 
-            // 顶部图例：悬停时显示光标时点数据，否则显示最新值（对齐常见分时软件）
-            double legendY = topPad;
+            // 顶部图例画在绘图区上方留白内，悬停显示光标时点，否则显示最新值
+            double legendY = 2;
             double lx = leftPad + 4;
             if (_hoverIndex >= 0 && _hoverIndex < points.Count)
             {
-                DrawHoverLegend(dc, points, avgPoints, drawAvg, _hoverIndex, lx, legendY);
+                DrawHoverLegend(dc, points, avgPoints, times, drawAvg, _hoverIndex, lx, legendY);
             }
             else
             {
@@ -303,6 +440,9 @@ public class SparklineControl : Control
                     LabelTypeface, 10, priceBrush, 1.0);
                 dc.DrawText(priceFt, new Point(lx, legendY));
             }
+
+            // 第二行右侧：最新买卖点建议
+            DrawSignalSummary(dc, signals, w, LegendHeight + 2);
         }
 
         bool isUp = IsUp;
@@ -310,9 +450,9 @@ public class SparklineControl : Control
         Color lineColor = showLabels
             ? Color.FromRgb(0x22, 0x22, 0x22)
             : (isUp ? ColorRed : ColorGreen);
-        var linePen = new Pen(new SolidColorBrush(lineColor), showLabels ? 1.4 : 1.0);
-        int slots = ResolveSlotCount(points.Count);
-        double stepX = chartW / (slots - 1);
+        // 统一 1.0 线宽，详情图线太粗会压住买卖点标记
+        var linePen = new Pen(new SolidColorBrush(lineColor), 1.0);
+        double stepX = chartW / Math.Max(1, slots - 1);
         double endX = leftPad + (points.Count - 1) * stepX;
 
         DrawPolyline(dc, points, leftPad, stepX, Y, linePen);
@@ -342,9 +482,39 @@ public class SparklineControl : Control
             if (count >= 2)
             {
                 var avgSlice = avgPoints.Take(count).ToList();
-                var avgPen = new Pen(new SolidColorBrush(Color.FromRgb(245, 166, 35)), 1.6);
+                // 均价线也略收细，与现价线协调
+                var avgPen = new Pen(new SolidColorBrush(Color.FromRgb(245, 166, 35)), 1.2);
                 avgPen.Freeze();
                 DrawPolyline(dc, avgSlice, leftPad, stepX, Y, avgPen);
+            }
+        }
+
+        // 买卖点标记：买点在折线下方，卖点在折线上方
+        if (signals != null && signals.Count > 0)
+        {
+            double plotBottom = topPad + chartH;
+            foreach (var sig in signals)
+            {
+                int i = sig.Index;
+                if (i < 0 || i >= points.Count) continue;
+
+                double x = leftPad + i * stepX;
+                double py = Y(points[i]);
+                var brush = new SolidColorBrush(sig.IsBuy ? ColorRed : ColorGreen);
+
+                // 标记与价格线保持 14px 间距，提高可读性
+                if (sig.IsBuy)
+                {
+                    double yBase = Math.Min(py + TradeMarkGap, plotBottom - 14);
+                    DrawTradeArrow(dc, x, yBase, true, brush);
+                    DrawLabel(dc, "买", x - 4, yBase + 1, brush);
+                }
+                else
+                {
+                    double yBase = Math.Max(py - TradeMarkGap, topPad + 12);
+                    DrawTradeArrow(dc, x, yBase, false, brush);
+                    DrawLabel(dc, "卖", x - 4, yBase - 12, brush);
+                }
             }
         }
 
@@ -358,17 +528,17 @@ public class SparklineControl : Control
 
         // 悬停十字光标（仅详情大图）
         if (showLabels && _hoverIndex >= 0 && _hoverIndex < points.Count)
-            DrawCrosshair(dc, points, avgPoints, drawAvg, _hoverIndex, leftPad, stepX, w, Y, topPad, chartH);
+            DrawCrosshair(dc, points, avgPoints, times, drawAvg, _hoverIndex, leftPad, stepX, w, Y, topPad, chartH);
     }
 
     /// <summary>悬停数据行：时间 / 价 / 均价 / 涨跌幅</summary>
-    private void DrawHoverLegend(DrawingContext dc, List<decimal> points, List<decimal>? avgPoints, bool drawAvg,
-        int index, double x, double y)
+    private void DrawHoverLegend(DrawingContext dc, List<decimal> points, List<decimal>? avgPoints,
+        List<string>? times, bool drawAvg, int index, double x, double y)
     {
         decimal price = points[index];
         decimal baseline = BaseLine;
         decimal change = baseline > 0 ? (price - baseline) / baseline * 100m : 0;
-        string time = Times is { } times && index < times.Count ? times[index] : string.Empty;
+        string time = times != null && index < times.Count ? times[index] : string.Empty;
 
         var items = new List<(string Text, Color Color)>();
         if (!string.IsNullOrEmpty(time))
@@ -382,8 +552,9 @@ public class SparklineControl : Control
     }
 
     /// <summary>十字光标：虚线 + 光标点 + 价格/涨幅/时间标签</summary>
-    private void DrawCrosshair(DrawingContext dc, List<decimal> points, List<decimal>? avgPoints, bool drawAvg,
-        int index, double leftPad, double stepX, double w, Func<decimal, double> y, double topPad, double chartH)
+    private void DrawCrosshair(DrawingContext dc, List<decimal> points, List<decimal>? avgPoints,
+        List<string>? times, bool drawAvg, int index, double leftPad, double stepX, double w,
+        Func<decimal, double> y, double topPad, double chartH)
     {
         decimal price = points[index];
         double x = leftPad + index * stepX;
@@ -402,7 +573,7 @@ public class SparklineControl : Control
         CrosshairRenderer.DrawTag(dc, price.ToString("F2"), priceY, leftPad - 2, color);
         CrosshairRenderer.DrawTag(dc, $"{change:+0.00;-0.00;0.00}%", priceY, w - 2, color);
 
-        string time = Times is { } times && index < times.Count ? times[index] : string.Empty;
+        string time = times != null && index < times.Count ? times[index] : string.Empty;
         CrosshairRenderer.DrawTimeTag(dc, time, x, bottom - 8, leftPad, w);
     }
 
@@ -440,7 +611,7 @@ public class SparklineControl : Control
     }
 
     private void DrawMacdPane(DrawingContext dc, int startIdx, int n, double w, double top, double paneH,
-        double spacing, IndicatorCalculator.MacdResult macd)
+        double leftPad, double stepX, IndicatorCalculator.MacdResult macd)
     {
         DrawPaneFrame(dc, w, top);
         int last = macd.Dif.Length - 1;
@@ -463,12 +634,12 @@ public class SparklineControl : Control
         dc.DrawLine(new Pen(new SolidColorBrush(Color.FromArgb(60, 128, 128, 128)), 0.5),
             new Point(8, Y(0)), new Point(w - 4, Y(0)));
 
-        double barW = Math.Max(1, spacing * 0.45);
+        double barW = Math.Max(1, stepX * 0.45);
         for (int i = 0; i < n; i++)
         {
             int gi = startIdx + i;
             if (!macd.Hist[gi].HasValue) continue;
-            double x = 8 + (i + 0.5) * spacing;
+            double x = leftPad + i * stepX;
             double y0 = Y(0);
             double y1 = Y(macd.Hist[gi]!.Value);
             bool up = macd.Hist[gi]!.Value >= 0;
@@ -479,12 +650,12 @@ public class SparklineControl : Control
                 new Rect(x - barW / 2, Math.Min(y0, y1), barW, Math.Max(1, Math.Abs(y1 - y0))));
         }
 
-        DrawNullableLine(dc, macd.Dif, startIdx, n, spacing, Y, ColorRed, 1.1);
-        DrawNullableLine(dc, macd.Dea, startIdx, n, spacing, Y, ColorGold, 1.1);
+        DrawNullableLine(dc, macd.Dif, startIdx, n, leftPad, stepX, Y, ColorRed, 1.1);
+        DrawNullableLine(dc, macd.Dea, startIdx, n, leftPad, stepX, Y, ColorGold, 1.1);
     }
 
     private void DrawKdjPane(DrawingContext dc, int startIdx, int n, double w, double top, double paneH,
-        double spacing, IndicatorCalculator.KdjResult kdj)
+        double leftPad, double stepX, IndicatorCalculator.KdjResult kdj)
     {
         DrawPaneFrame(dc, w, top);
         int last = kdj.K.Length - 1;
@@ -504,13 +675,13 @@ public class SparklineControl : Control
         if (range == 0) range = 1;
         double Y(decimal v) => chartBottom - (double)(v - lo) / range * (chartBottom - chartTop);
 
-        DrawNullableLine(dc, kdj.K, startIdx, n, spacing, Y, ColorRed, 1.1);
-        DrawNullableLine(dc, kdj.D, startIdx, n, spacing, Y, ColorGold, 1.1);
-        DrawNullableLine(dc, kdj.J, startIdx, n, spacing, Y, ColorBlue, 1.1);
+        DrawNullableLine(dc, kdj.K, startIdx, n, leftPad, stepX, Y, ColorRed, 1.1);
+        DrawNullableLine(dc, kdj.D, startIdx, n, leftPad, stepX, Y, ColorGold, 1.1);
+        DrawNullableLine(dc, kdj.J, startIdx, n, leftPad, stepX, Y, ColorBlue, 1.1);
     }
 
     private void DrawRsiPane(DrawingContext dc, int startIdx, int n, double w, double top, double paneH,
-        double spacing, IndicatorCalculator.RsiResult rsi)
+        double leftPad, double stepX, IndicatorCalculator.RsiResult rsi)
     {
         DrawPaneFrame(dc, w, top);
         int last = rsi.Rsi1.Length - 1;
@@ -530,9 +701,9 @@ public class SparklineControl : Control
         if (range == 0) range = 1;
         double Y(decimal v) => chartBottom - (double)(v - lo) / range * (chartBottom - chartTop);
 
-        DrawNullableLine(dc, rsi.Rsi1, startIdx, n, spacing, Y, ColorRed, 1.1);
-        DrawNullableLine(dc, rsi.Rsi2, startIdx, n, spacing, Y, ColorGold, 1.1);
-        DrawNullableLine(dc, rsi.Rsi3, startIdx, n, spacing, Y, ColorBlue, 1.1);
+        DrawNullableLine(dc, rsi.Rsi1, startIdx, n, leftPad, stepX, Y, ColorRed, 1.1);
+        DrawNullableLine(dc, rsi.Rsi2, startIdx, n, leftPad, stepX, Y, ColorGold, 1.1);
+        DrawNullableLine(dc, rsi.Rsi3, startIdx, n, leftPad, stepX, Y, ColorBlue, 1.1);
     }
 
     private static void DrawPaneFrame(DrawingContext dc, double w, double top)
@@ -542,7 +713,7 @@ public class SparklineControl : Control
     }
 
     private static void DrawNullableLine(DrawingContext dc, decimal?[] series, int startIdx, int n,
-        double spacing, Func<decimal, double> yFunc, Color color, double thickness)
+        double leftPad, double stepX, Func<decimal, double> yFunc, Color color, double thickness)
     {
         var pen = new Pen(new SolidColorBrush(color), thickness);
         Point? prev = null;
@@ -554,7 +725,7 @@ public class SparklineControl : Control
                 prev = null;
                 continue;
             }
-            var pt = new Point(8 + (i + 0.5) * spacing, yFunc(series[gi]!.Value));
+            var pt = new Point(leftPad + i * stepX, yFunc(series[gi]!.Value));
             if (prev.HasValue) dc.DrawLine(pen, prev.Value, pt);
             prev = pt;
         }
@@ -617,5 +788,45 @@ public class SparklineControl : Control
         var ft = new FormattedText(text, System.Globalization.CultureInfo.CurrentCulture,
             FlowDirection.LeftToRight, LabelTypeface, 10, brush, 1.0);
         dc.DrawText(ft, new Point(x, y));
+    }
+
+    // 买卖点三角箭头：up=true 向上（买点），否则向下（卖点）
+    private static void DrawTradeArrow(DrawingContext dc, double x, double yBase, bool up, SolidColorBrush brush)
+    {
+        var geo = new StreamGeometry();
+        using (var ctx = geo.Open())
+        {
+            if (up)
+            {
+                ctx.BeginFigure(new Point(x, yBase - 6), true, true);
+                ctx.LineTo(new Point(x - 3.2, yBase), true, false);
+                ctx.LineTo(new Point(x + 3.2, yBase), true, false);
+            }
+            else
+            {
+                ctx.BeginFigure(new Point(x, yBase + 6), true, true);
+                ctx.LineTo(new Point(x - 3.2, yBase), true, false);
+                ctx.LineTo(new Point(x + 3.2, yBase), true, false);
+            }
+        }
+        geo.Freeze();
+        dc.DrawGeometry(brush, null, geo);
+    }
+
+    // 买卖点摘要：展示最新一条共振信号，无信号时提示观望
+    private static void DrawSignalSummary(DrawingContext dc, List<IndicatorCalculator.TradeSignal>? signals,
+        double w, double y)
+    {
+        IndicatorCalculator.TradeSignal? latest = signals is { Count: > 0 } ? signals[^1] : null;
+        string text = latest == null
+            ? "MACD+KDJ 暂无买卖点"
+            : (latest.IsBuy ? "买点：" : "卖点：") + latest.Reason;
+        Color color = latest == null
+            ? Color.FromArgb(150, 100, 100, 100)
+            : (latest.IsBuy ? ColorRed : ColorGreen);
+
+        var ft = new FormattedText(text, System.Globalization.CultureInfo.CurrentCulture,
+            FlowDirection.LeftToRight, LabelTypeface, 9, new SolidColorBrush(color), 1.0);
+        dc.DrawText(ft, new Point(Math.Max(46, w - 4 - ft.Width), y));
     }
 }

@@ -5,42 +5,55 @@
         xmlns:conv="clr-namespace:StockTool.Converters"
         WindowStyle="None"
         AllowsTransparency="True"
-        Background="Transparent"
+        Background="#01000000"
         ResizeMode="NoResize"
         ShowInTaskbar="False"
         Topmost="True"
         ShowActivated="False"
         Focusable="False"
         FontFamily="Segoe UI, Microsoft YaHei UI"
-        Title="任务栏行情">
+        Title="任务栏行情"
+        PreviewMouseLeftButtonDown="Window_PreviewMouseLeftButtonDown">
     <Window.Resources>
         <conv:NegativeToBooleanConverter x:Key="NegativeConverter" />
         <DataTemplate x:Key="TickerTemplate">
-            <Border Padding="8,2,10,2" Background="Transparent">
-                <Grid>
+            <!-- alpha=1：分层窗 Transparent(alpha=0) 会点穿到任务栏，导致叠层被盖住“消失” -->
+            <Border Padding="6,0,8,0"
+                    Background="#01000000"
+                    Cursor="Hand"
+                    ToolTip="双击打开并定位到该股票"
+                    MouseLeftButtonDown="Ticker_MouseLeftButtonDown">
+                <Grid VerticalAlignment="Center" Height="36"
+                      IsHitTestVisible="False">
                     <Grid.ColumnDefinitions>
                         <ColumnDefinition Width="Auto" />
-                        <ColumnDefinition Width="56" />
+                        <ColumnDefinition Width="Auto" />
                     </Grid.ColumnDefinitions>
 
-                    <StackPanel Grid.Column="0" VerticalAlignment="Center" Margin="0,0,6,0">
+                    <StackPanel Grid.Column="0" VerticalAlignment="Center" Margin="0,0,4,0">
                         <TextBlock Text="{Binding Stock.DisplayName}"
-                                   FontSize="12"
+                                   FontSize="11"
                                    FontWeight="Normal"
                                    Foreground="{Binding PrimaryTextBrush, RelativeSource={RelativeSource AncestorType=Window}}"
                                    TextTrimming="CharacterEllipsis"
-                                   MaxWidth="108" />
-                        <StackPanel Orientation="Horizontal" Margin="0,1,0,0">
+                                   MaxWidth="100"
+                                   LineStackingStrategy="BlockLineHeight"
+                                   LineHeight="13" />
+                        <StackPanel Orientation="Horizontal">
                             <TextBlock Text="{Binding Stock.TaskbarPriceText}"
-                                       FontSize="12"
-                                       FontWeight="Normal"
-                                       Foreground="{Binding PrimaryTextBrush, RelativeSource={RelativeSource AncestorType=Window}}"
-                                       VerticalAlignment="Bottom" />
-                            <TextBlock Text="{Binding Stock.ChangePercentText}"
                                        FontSize="11"
                                        FontWeight="Normal"
-                                       Margin="4,0,0,0"
-                                       VerticalAlignment="Bottom">
+                                       Foreground="{Binding PrimaryTextBrush, RelativeSource={RelativeSource AncestorType=Window}}"
+                                       VerticalAlignment="Bottom"
+                                       LineStackingStrategy="BlockLineHeight"
+                                       LineHeight="13" />
+                            <TextBlock Text="{Binding Stock.ChangePercentText}"
+                                       FontSize="10"
+                                       FontWeight="Normal"
+                                       Margin="3,0,0,0"
+                                       VerticalAlignment="Bottom"
+                                       LineStackingStrategy="BlockLineHeight"
+                                       LineHeight="12">
                                 <TextBlock.Style>
                                     <Style TargetType="TextBlock">
                                         <Setter Property="Foreground" Value="#D93025" />
@@ -59,13 +72,14 @@
                         </StackPanel>
                     </StackPanel>
 
+                    <!-- ExpectedCount=0：已有分时点拉满宽度；高度固定保证上下不被裁切 -->
                     <controls:SparklineControl Grid.Column="1"
                                                Points="{Binding Stock.IntradayPoints}"
                                                BaseLine="{Binding Stock.YesterdayClose}"
                                                IsUp="{Binding Stock.IsUp}"
-                                               ExpectedCount="{Binding Stock.IntradaySlotCount}"
-                                               Width="52"
-                                               Height="28"
+                                               ExpectedCount="0"
+                                               Width="{Binding SparklineWidth, RelativeSource={RelativeSource AncestorType=Window}}"
+                                               Height="30"
                                                Margin="2,0"
                                                VerticalAlignment="Center" />
                 </Grid>
@@ -73,9 +87,9 @@
         </DataTemplate>
     </Window.Resources>
 
-    <!-- 背景全透明，透出任务栏本色 -->
+    <!-- alpha=1 几乎全透明，但仍可命中，避免点穿任务栏 -->
     <ItemsControl x:Name="TickerList"
-                  Background="Transparent"
+                  Background="#01000000"
                   ItemTemplate="{StaticResource TickerTemplate}">
         <ItemsControl.ItemsPanel>
             <ItemsPanelTemplate>

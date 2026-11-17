@@ -32,6 +32,14 @@ public static class IndicatorCalculator
         public decimal?[] Rsi3 { get; init; } = [];
     }
 
+    /// <summary>买卖点信号：K 线索引 + 方向 + 触发原因</summary>
+    public sealed class TradeSignal
+    {
+        public int Index { get; init; }
+        public bool IsBuy { get; init; }
+        public string Reason { get; init; } = string.Empty;
+    }
+
     public static BollResult Boll(IReadOnlyList<KlineItem> data, int period = 20, double mult = 2.0)
     {
         int n = data.Count;
@@ -135,6 +143,83 @@ public static class IndicatorCalculator
             Rsi2 = RsiSingle(data, p2),
             Rsi3 = RsiSingle(data, p3)
         };
+    }
+
+    /// <summary>
+    /// MACD+KDJ 共振买卖点：买点=MACD金叉且KDJ低位金叉，卖点=MACD死叉且KDJ高位死叉。
+    /// window 允许两指标在若干根K线内先后出现；minGap 为相邻信号最小间隔，避免重复标记。
+    /// </summary>
+    public static List<TradeSignal> MacdKdjSignals(IReadOnlyList<KlineItem> data,
+        int window = 3, decimal kdjLow = 30m, decimal kdjHigh = 70m, int minGap = 5)
+    {
+        var signals = new List<TradeSignal>();
+        int n = data.Count;
+        if (n < 2) return signals;
+
+        var macd = Macd(data);
+        var kdj = Kdj(data);
+
+        var macdGolden = new bool[n];
+        var macdDead = new bool[n];
+        var kdjGolden = new bool[n];
+        var kdjDead = new bool[n];
+
+        for (int i = 1; i < n; i++)
+        {
+            // MACD 金叉 / 死叉（DIF 上穿 / 下穿 DEA）
+            var dif0 = macd.Dif[i - 1];
+            var dea0 = macd.Dea[i - 1];
+            var dif1 = macd.Dif[i];
+            var dea1 = macd.Dea[i];
+            if (dif0.HasValue && dea0.HasValue && dif1.HasValue && dea1.HasValue)
+            {
+                if (dif0.Value <= dea0.Value && dif1.Value > dea1.Value) macdGolden[i] = true;
+                if (dif0.Value >= dea0.Value && dif1.Value < dea1.Value) macdDead[i] = true;
+            }
+
+            // KDJ 低位金叉 / 高位死叉
+            var k0 = kdj.K[i - 1];
+            var d0 = kdj.D[i - 1];
+            var k1 = kdj.K[i];
+            var d1 = kdj.D[i];
+            if (k0.HasValue && d0.HasValue && k1.HasValue && d1.HasValue)
+            {
+                if (k0.Value <= d0.Value && k1.Value > d1.Value && k1.Value < kdjLow) kdjGolden[i] = true;
+                if (k0.Value >= d0.Value && k1.Value < d1.Value && k1.Value > kdjHigh) kdjDead[i] = true;
+            }
+        }
+
+        // 用半量级初值，避免 index - lastIdx 溢出
+        int lastIdx = int.MinValue / 2;
+        for (int i = 1; i < n; i++)
+        {
+            if (kdjGolden[i] && NearestMark(macdGolden, i, window, out int buyIdx))
+                Add(Math.Max(i, buyIdx), true, "MACD金叉+KDJ低位金叉");
+            else if (kdjDead[i] && NearestMark(macdDead, i, window, out int sellIdx))
+                Add(Math.Max(i, sellIdx), false, "MACD死叉+KDJ高位死叉");
+        }
+
+        return signals;
+
+        // 同向信号间隔不足 minGap 时丢弃
+        void Add(int index, bool isBuy, string reason)
+        {
+            if (index - lastIdx < minGap) return;
+            lastIdx = index;
+            signals.Add(new TradeSignal { Index = index, IsBuy = isBuy, Reason = reason });
+        }
+    }
+
+    // 在 index 前后 window 根内查找最近的标记位
+    private static bool NearestMark(bool[] marks, int index, int window, out int found)
+    {
+        found = -1;
+        for (int d = 0; d <= window; d++)
+        {
+            if (index - d >= 0 && marks[index - d]) { found = index - d; return true; }
+            if (index + d < marks.Length && marks[index + d]) { found = index + d; return true; }
+        }
+        return false;
     }
 
     private static decimal?[] RsiSingle(IReadOnlyList<KlineItem> data, int period)

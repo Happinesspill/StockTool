@@ -1,13 +1,15 @@
-﻿<Window x:Class="StockTool.Views.ManageGroupsWindow"
+<Window x:Class="StockTool.Views.ManageGroupsWindow"
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:controls="clr-namespace:StockTool.Controls"
         xmlns:conv="clr-namespace:StockTool.Converters"
+        xmlns:vm="clr-namespace:StockTool.ViewModels"
         WindowStyle="None"
         AllowsTransparency="True"
         Background="Transparent"
-        ResizeMode="NoResize"
-        Width="560" Height="860"
+        ResizeMode="CanResizeWithGrip"
+        Width="640" Height="920"
+        MinWidth="520" MinHeight="700"
         WindowStartupLocation="CenterScreen"
         ShowInTaskbar="False"
         Topmost="False"
@@ -16,6 +18,7 @@
 
     <Window.Resources>
         <conv:NegativeToBooleanConverter x:Key="NegativeConverter" />
+        <conv:GrayLevelBorderConverter x:Key="GrayLevelBorderConverter" />
         <Style x:Key="GroupActionButtonStyle" TargetType="Button">
             <Setter Property="Height" Value="26" />
             <Setter Property="MinWidth" Value="52" />
@@ -271,61 +274,74 @@
                                 Click="BtnAddGroup_Click" />
                     </Grid>
 
+                    <TextBlock Text="拖拽可调顺序，右键重命名/删除"
+                               Foreground="#888888"
+                               FontSize="11"
+                               Margin="0,0,0,8" />
+
                     <ListBox x:Name="GroupList"
                              BorderThickness="0"
                              Background="Transparent"
-                             MaxHeight="160"
                              ScrollViewer.HorizontalScrollBarVisibility="Disabled"
+                             ScrollViewer.VerticalScrollBarVisibility="Disabled"
                              AllowDrop="True"
                              PreviewMouseLeftButtonDown="GroupList_PreviewMouseLeftButtonDown"
                              PreviewMouseMove="GroupList_PreviewMouseMove"
                              Drop="GroupList_Drop"
                              GiveFeedback="GroupList_GiveFeedback"
                              DragOver="GroupList_DragOver">
+                        <ListBox.ItemsPanel>
+                            <ItemsPanelTemplate>
+                                <WrapPanel Orientation="Horizontal" />
+                            </ItemsPanelTemplate>
+                        </ListBox.ItemsPanel>
                         <ListBox.ItemContainerStyle>
                             <Style TargetType="ListBoxItem">
+                                <Setter Property="FocusVisualStyle" Value="{x:Null}" />
                                 <Setter Property="Padding" Value="0" />
-                                <Setter Property="Margin" Value="0,0,0,8" />
-                                <Setter Property="HorizontalContentAlignment" Value="Stretch" />
+                                <Setter Property="Margin" Value="0,0,8,8" />
+                                <Setter Property="Cursor" Value="Hand" />
                                 <Setter Property="Template">
                                     <Setter.Value>
                                         <ControlTemplate TargetType="ListBoxItem">
-                                            <Border Background="#F0F0F0"
-                                                    CornerRadius="10"
-                                                    Padding="14,12">
-                                                <ContentPresenter />
+                                            <Border x:Name="Bd"
+                                                    Background="#F0F0F0"
+                                                    BorderBrush="Transparent"
+                                                    BorderThickness="1"
+                                                    CornerRadius="14"
+                                                    Padding="12,0"
+                                                    Height="28"
+                                                    ToolTip="拖拽排序；右键重命名/删除">
+                                                <Border.ContextMenu>
+                                                    <ContextMenu>
+                                                        <MenuItem Header="重命名"
+                                                                  Click="MenuRenameGroup_Click" />
+                                                        <MenuItem Header="删除"
+                                                                  Foreground="#FF453A"
+                                                                  Click="MenuDeleteGroup_Click" />
+                                                    </ContextMenu>
+                                                </Border.ContextMenu>
+                                                <TextBlock x:Name="TabText"
+                                                           Text="{Binding Name}"
+                                                           FontSize="12"
+                                                           Foreground="#555555"
+                                                           VerticalAlignment="Center"
+                                                           HorizontalAlignment="Center" />
                                             </Border>
+                                            <ControlTemplate.Triggers>
+                                                <Trigger Property="IsMouseOver" Value="True">
+                                                    <Setter TargetName="Bd" Property="Background" Value="#E4E4E4" />
+                                                </Trigger>
+                                                <Trigger Property="IsSelected" Value="True">
+                                                    <Setter TargetName="Bd" Property="Background" Value="#B34A4A4A" />
+                                                    <Setter TargetName="TabText" Property="Foreground" Value="White" />
+                                                </Trigger>
+                                            </ControlTemplate.Triggers>
                                         </ControlTemplate>
                                     </Setter.Value>
                                 </Setter>
                             </Style>
                         </ListBox.ItemContainerStyle>
-                        <ListBox.ItemTemplate>
-                            <DataTemplate>
-                                <Grid>
-                                    <Grid.ColumnDefinitions>
-                                        <ColumnDefinition Width="*" />
-                                        <ColumnDefinition Width="Auto" />
-                                        <ColumnDefinition Width="Auto" />
-                                    </Grid.ColumnDefinitions>
-                                    <TextBlock Text="{Binding Name}"
-                                               Foreground="#1A1A1A"
-                                               FontSize="14"
-                                               VerticalAlignment="Center" />
-                                    <Button Grid.Column="1"
-                                            Content="重命名"
-                                            Style="{StaticResource GroupActionButtonStyle}"
-                                            Margin="8,0,6,0"
-                                            Click="BtnRename_Click"
-                                            Tag="{Binding}" />
-                                    <Button Grid.Column="2"
-                                            Content="删除"
-                                            Style="{StaticResource GroupDeleteButtonStyle}"
-                                            Click="BtnDelete_Click"
-                                            Tag="{Binding}" />
-                                </Grid>
-                            </DataTemplate>
-                        </ListBox.ItemTemplate>
                     </ListBox>
 
                     <Border Height="1" Background="#E5E5E5" Margin="0,8,0,14" />
@@ -450,13 +466,131 @@
                                Margin="4,0,0,8"
                                Visibility="Collapsed" />
 
+                    <Grid Margin="0,4,0,4">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="Auto" />
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+                        <TextBlock Text="分时图长度"
+                                   Foreground="#555555"
+                                   FontSize="12"
+                                   VerticalAlignment="Center"
+                                   Margin="0,0,10,0" />
+                        <Slider Grid.Column="1"
+                                Minimum="{x:Static vm:MainViewModel.TaskbarSparklineWidthMin}"
+                                Maximum="{x:Static vm:MainViewModel.TaskbarSparklineWidthMax}"
+                                Value="{Binding TaskbarSparklineWidth, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                TickFrequency="1"
+                                IsSnapToTickEnabled="True"
+                                VerticalAlignment="Center"
+                                Margin="0,0,10,0" />
+                        <TextBlock Grid.Column="2"
+                                   Text="{Binding TaskbarSparklineWidthText}"
+                                   Foreground="#666666"
+                                   FontSize="12"
+                                   Width="28"
+                                   TextAlignment="Right"
+                                   VerticalAlignment="Center" />
+                    </Grid>
+
+                    <!-- 与系统时钟的间距 -->
+                    <Grid Margin="0,4,0,4">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="Auto" />
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+                        <TextBlock Text="与时间距离"
+                                   Foreground="#555555"
+                                   FontSize="12"
+                                   VerticalAlignment="Center"
+                                   Margin="0,0,10,0"
+                                   ToolTip="任务栏股票与后面系统时间的间距" />
+                        <Slider Grid.Column="1"
+                                Minimum="{x:Static vm:MainViewModel.TaskbarClockGapMin}"
+                                Maximum="{x:Static vm:MainViewModel.TaskbarClockGapMax}"
+                                Value="{Binding TaskbarClockGap, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                TickFrequency="1"
+                                IsSnapToTickEnabled="True"
+                                VerticalAlignment="Center"
+                                Margin="0,0,10,0" />
+                        <TextBlock Grid.Column="2"
+                                   Text="{Binding TaskbarClockGapText}"
+                                   Foreground="#666666"
+                                   FontSize="12"
+                                   Width="28"
+                                   TextAlignment="Right"
+                                   VerticalAlignment="Center" />
+                    </Grid>
+
+                    <!-- 上下位置微调 -->
+                    <Grid Margin="0,4,0,4">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="Auto" />
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+                        <TextBlock Text="上下位置"
+                                   Foreground="#555555"
+                                   FontSize="12"
+                                   VerticalAlignment="Center"
+                                   Margin="0,0,10,0"
+                                   ToolTip="正值下移，负值上移，用于与任务栏图标对齐" />
+                        <Slider Grid.Column="1"
+                                Minimum="{x:Static vm:MainViewModel.TaskbarVerticalOffsetMin}"
+                                Maximum="{x:Static vm:MainViewModel.TaskbarVerticalOffsetMax}"
+                                Value="{Binding TaskbarVerticalOffset, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                TickFrequency="1"
+                                IsSnapToTickEnabled="True"
+                                VerticalAlignment="Center"
+                                Margin="0,0,10,0" />
+                        <TextBlock Grid.Column="2"
+                                   Text="{Binding TaskbarVerticalOffsetText}"
+                                   Foreground="#666666"
+                                   FontSize="12"
+                                   Width="28"
+                                   TextAlignment="Right"
+                                   VerticalAlignment="Center" />
+                    </Grid>
+
+                    <Grid Margin="0,8,0,4">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="Auto" />
+                            <ColumnDefinition Width="*" />
+                        </Grid.ColumnDefinitions>
+                        <TextBlock Text="名称价格颜色"
+                                   Foreground="#555555"
+                                   FontSize="12"
+                                   VerticalAlignment="Center"
+                                   Margin="0,0,10,0" />
+                        <StackPanel Grid.Column="1" Orientation="Horizontal">
+                            <Button Width="36" Height="28" Margin="0,0,8,0" Cursor="Hand" ToolTip="浅灰"
+                                    Tag="1" Click="BtnTaskbarGray_Click" Background="#F0F0F0"
+                                    BorderBrush="{Binding TaskbarTextGrayLevel, Converter={StaticResource GrayLevelBorderConverter}, ConverterParameter=1}"
+                                    BorderThickness="2" />
+                            <Button Width="36" Height="28" Margin="0,0,8,0" Cursor="Hand" ToolTip="次浅"
+                                    Tag="2" Click="BtnTaskbarGray_Click" Background="#C8C8C8"
+                                    BorderBrush="{Binding TaskbarTextGrayLevel, Converter={StaticResource GrayLevelBorderConverter}, ConverterParameter=2}"
+                                    BorderThickness="2" />
+                            <Button Width="36" Height="28" Margin="0,0,8,0" Cursor="Hand" ToolTip="中灰"
+                                    Tag="3" Click="BtnTaskbarGray_Click" Background="#969696"
+                                    BorderBrush="{Binding TaskbarTextGrayLevel, Converter={StaticResource GrayLevelBorderConverter}, ConverterParameter=3}"
+                                    BorderThickness="2" />
+                            <Button Width="36" Height="28" Margin="0,0,8,0" Cursor="Hand" ToolTip="深灰"
+                                    Tag="4" Click="BtnTaskbarGray_Click" Background="#646464"
+                                    BorderBrush="{Binding TaskbarTextGrayLevel, Converter={StaticResource GrayLevelBorderConverter}, ConverterParameter=4}"
+                                    BorderThickness="2" />
+                        </StackPanel>
+                    </Grid>
+
                     <!-- 浏览效果 -->
                     <TextBlock Text="浏览效果"
                                Foreground="#1A1A1A"
                                FontSize="15"
                                FontWeight="SemiBold"
                                Margin="0,10,0,8" />
-                    <TextBlock Text="示意任务栏透明贴合效果（实际背景为系统任务栏颜色）"
+                    <TextBlock Text="示意任务栏透明贴合效果（长度与颜色可实时预览）"
                                Foreground="#888888"
                                FontSize="11"
                                Margin="0,0,0,8"
@@ -467,13 +601,9 @@
                             Margin="0,0,0,4"
                             ClipToBounds="True">
                         <Border.Background>
-                            <LinearGradientBrush StartPoint="0,0" EndPoint="1,1">
-                                <GradientStop Color="#E8D4E8" Offset="0" />
-                                <GradientStop Color="#DCC8DE" Offset="0.5" />
-                                <GradientStop Color="#D0C0D8" Offset="1" />
-                            </LinearGradientBrush>
+                            <SolidColorBrush Color="#2B2B2B" />
                         </Border.Background>
-                        <ScrollViewer HorizontalScrollBarVisibility="Auto"
+                        <ScrollViewer HorizontalScrollBarVisibility="Disabled"
                                       VerticalScrollBarVisibility="Disabled">
                             <ItemsControl ItemsSource="{Binding TaskbarStocks}">
                                 <ItemsControl.ItemsPanel>
@@ -487,14 +617,14 @@
                                             <Grid>
                                                 <Grid.ColumnDefinitions>
                                                     <ColumnDefinition Width="Auto" />
-                                                    <ColumnDefinition Width="56" />
+                                                    <ColumnDefinition Width="Auto" />
                                                 </Grid.ColumnDefinitions>
                                                 <StackPanel Grid.Column="0" VerticalAlignment="Center" Margin="0,0,6,0">
                                                     <TextBlock Text="{Binding Stock.DisplayName}"
                                                                FontSize="12"
                                                                FontWeight="Normal"
                                                                FontFamily="Segoe UI, Microsoft YaHei UI"
-                                                               Foreground="#1A1A1A"
+                                                               Foreground="{Binding DataContext.TaskbarTextBrush, RelativeSource={RelativeSource AncestorType=Window}}"
                                                                MaxWidth="108"
                                                                TextTrimming="CharacterEllipsis" />
                                                     <StackPanel Orientation="Horizontal" Margin="0,1,0,0">
@@ -502,7 +632,7 @@
                                                                    FontSize="12"
                                                                    FontWeight="Normal"
                                                                    FontFamily="Segoe UI, Microsoft YaHei UI"
-                                                                   Foreground="#1A1A1A"
+                                                                   Foreground="{Binding DataContext.TaskbarTextBrush, RelativeSource={RelativeSource AncestorType=Window}}"
                                                                    VerticalAlignment="Bottom" />
                                                         <TextBlock Text="{Binding Stock.ChangePercentText}"
                                                                    FontSize="11"
@@ -531,8 +661,8 @@
                                                                            Points="{Binding Stock.IntradayPoints}"
                                                                            BaseLine="{Binding Stock.YesterdayClose}"
                                                                            IsUp="{Binding Stock.IsUp}"
-                                                                           ExpectedCount="{Binding Stock.IntradaySlotCount}"
-                                                                           Width="52"
+                                                                           ExpectedCount="0"
+                                                                           Width="{Binding DataContext.TaskbarSparklineWidth, RelativeSource={RelativeSource AncestorType=Window}}"
                                                                            Height="28"
                                                                            Margin="2,0"
                                                                            VerticalAlignment="Center" />
@@ -590,6 +720,29 @@
                     </Button.Template>
                 </Button>
             </Grid>
+
+            <!-- 右下角拖拽调整窗口大小 -->
+            <Thumb Grid.Row="0" Grid.RowSpan="2"
+                   x:Name="ResizeThumb"
+                   Width="18" Height="18"
+                   HorizontalAlignment="Right"
+                   VerticalAlignment="Bottom"
+                   Margin="0,0,-4,-4"
+                   Cursor="SizeNWSE"
+                   DragDelta="ResizeThumb_DragDelta"
+                   ToolTip="拖拽调整大小">
+                <Thumb.Template>
+                    <ControlTemplate TargetType="Thumb">
+                        <Canvas Background="Transparent" Width="18" Height="18">
+                            <Path Stroke="#AA888888"
+                                  StrokeThickness="1.5"
+                                  StrokeStartLineCap="Round"
+                                  StrokeEndLineCap="Round"
+                                  Data="M 10,16 L 16,10 M 13,16 L 16,13" />
+                        </Canvas>
+                    </ControlTemplate>
+                </Thumb.Template>
+            </Thumb>
         </Grid>
     </Border>
 </Window>

@@ -13,7 +13,7 @@
 
         <Style x:Key="PeriodTabButtonStyle" TargetType="Button">
             <Setter Property="Height" Value="26" />
-            <Setter Property="MinWidth" Value="40" />
+            <Setter Property="MinWidth" Value="32" />
             <Setter Property="FontSize" Value="12" />
             <Setter Property="Cursor" Value="Hand" />
             <Setter Property="BorderThickness" Value="0" />
@@ -26,7 +26,7 @@
                         <Border x:Name="Bd"
                                 Background="{TemplateBinding Background}"
                                 CornerRadius="13"
-                                Padding="10,0">
+                                Padding="6,0">
                             <ContentPresenter HorizontalAlignment="Center"
                                               VerticalAlignment="Center" />
                         </Border>
@@ -268,12 +268,25 @@
                     <!-- Period pill selector（股票） -->
                     <Border Background="#F0F1F3" CornerRadius="16" Padding="3" Margin="0,0,0,8"
                             Visibility="{Binding IsFund, Converter={StaticResource EqualsVisConverter}, ConverterParameter=False}">
-                        <UniformGrid Columns="7" Rows="1">
+                        <UniformGrid Columns="8" Rows="1">
                             <Button Content="分时" Tag="0" Click="KlinePeriod_Click">
                                 <Button.Style>
                                     <Style TargetType="Button" BasedOn="{StaticResource PeriodTabButtonStyle}">
                                         <Style.Triggers>
                                             <DataTrigger Binding="{Binding KlinePeriod}" Value="0">
+                                                <Setter Property="Background" Value="#FFFFFF" />
+                                                <Setter Property="Foreground" Value="#1A1A1A" />
+                                                <Setter Property="FontWeight" Value="SemiBold" />
+                                            </DataTrigger>
+                                        </Style.Triggers>
+                                    </Style>
+                                </Button.Style>
+                            </Button>
+                            <Button Content="1分" Tag="1" Click="KlinePeriod_Click">
+                                <Button.Style>
+                                    <Style TargetType="Button" BasedOn="{StaticResource PeriodTabButtonStyle}">
+                                        <Style.Triggers>
+                                            <DataTrigger Binding="{Binding KlinePeriod}" Value="1">
                                                 <Setter Property="Background" Value="#FFFFFF" />
                                                 <Setter Property="Foreground" Value="#1A1A1A" />
                                                 <Setter Property="FontWeight" Value="SemiBold" />
@@ -364,12 +377,14 @@
                     </Border>
 
                     <!-- Charts: 分时折线 / K线蜡烛+指标（股票） -->
-                    <Grid MinHeight="180"
+                    <Grid MinHeight="196"
                           Visibility="{Binding IsFund, Converter={StaticResource EqualsVisConverter}, ConverterParameter=False}">
                         <controls:SparklineControl
+                            x:Name="IntradayChart"
                             Points="{Binding IntradayPoints}"
                             AvgPoints="{Binding IntradayAvgPoints}"
                             Times="{Binding IntradayTimes}"
+                            WarmupPoints="{Binding IntradayWarmupPoints}"
                             BaseLine="{Binding YesterdayClose}"
                             IsUp="{Binding IsUp}"
                             ExpectedCount="{Binding IntradaySlotCount}"
@@ -378,7 +393,11 @@
                             Margin="0,2"
                             Visibility="{Binding KlinePeriod, Converter={StaticResource EqualsVisConverter}, ConverterParameter=0}" />
                         <controls:KlineChartControl
+                            x:Name="KlineChart"
                             KlineData="{Binding KlineData}"
+                            KlinePeriod="{Binding KlinePeriod}"
+                            StrategySignals="{Binding StrategySignals}"
+                            StrategyText="{Binding StrategySummary}"
                             VisibleSubCount="{Binding DataContext.ChartSubCount, RelativeSource={RelativeSource AncestorType=Window}}"
                             Margin="0,2"
                             Visibility="{Binding KlinePeriod, Converter={StaticResource EqualsVisConverter}, ConverterParameter='!0'}" />
